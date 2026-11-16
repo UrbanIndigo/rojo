@@ -53,6 +53,15 @@ local e = Roact.createElement
 -- that is not there fails right away.
 local AGENT_CONNECT_POLL_INTERVAL = 2
 
+-- Local files all have place ID 0, so their saved endpoints are keyed by file
+-- name instead. Studio names the data model after the file when it opens it;
+-- the key is taken once, before a sync can rename it. Studio stores setting
+-- keys with dots replaced, so the name is reduced to the same characters.
+local priorSyncKey = if game.PlaceId == 0
+	then "file:" .. string.gsub(game.Name, "[^%w_%-]", "_")
+	elseif ignorePlaceIds[tostring(game.PlaceId)] then nil
+	else tostring(game.PlaceId)
+
 local App = Roact.Component:extend("App")
 
 function App:init()
@@ -280,12 +289,11 @@ function App:getPriorSyncInfo(): { host: string?, port: string?, projectName: st
 		return {}
 	end
 
-	local id = tostring(game.PlaceId)
-	if ignorePlaceIds[id] then
+	if priorSyncKey == nil then
 		return {}
 	end
 
-	return priorSyncInfos[id] or {}
+	return priorSyncInfos[priorSyncKey] or {}
 end
 
 function App:setPriorSyncInfo(host: string, port: string, projectName: string)
@@ -304,12 +312,11 @@ function App:setPriorSyncInfo(host: string, port: string, projectName: string)
 		end
 	end
 
-	local id = tostring(game.PlaceId)
-	if ignorePlaceIds[id] then
+	if priorSyncKey == nil then
 		return
 	end
 
-	priorSyncInfos[id] = {
+	priorSyncInfos[priorSyncKey] = {
 		host = if host ~= Config.defaultHost then host else nil,
 		port = if port ~= Config.defaultPort then port else nil,
 		projectName = projectName,
@@ -326,8 +333,10 @@ function App:forgetPriorSyncInfo()
 		priorSyncInfos = {}
 	end
 
-	local id = tostring(game.PlaceId)
-	priorSyncInfos[id] = nil
+	if priorSyncKey == nil then
+		return
+	end
+	priorSyncInfos[priorSyncKey] = nil
 	Log.trace("Erased last used endpoint for {}", game.PlaceId)
 
 	Settings:set("priorEndpoints", priorSyncInfos)
