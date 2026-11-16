@@ -2,7 +2,9 @@ use std::{
     io::{self, Write},
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
+    process,
     sync::Arc,
+    thread,
 };
 
 use clap::Parser;
@@ -39,10 +41,25 @@ pub struct ServeCommand {
     /// validation for binds where it is otherwise off (such as `0.0.0.0`).
     #[clap(long, value_delimiter = ',')]
     pub allowed_hosts: Vec<String>,
+
+    /// Stop serving once standard input is closed. `rojo mcp` uses this so the
+    /// servers it starts never outlive it, even if it is killed.
+    #[clap(long, hide = true)]
+    pub exit_on_stdin_eof: bool,
 }
 
 impl ServeCommand {
     pub fn run(self, global: GlobalOptions) -> anyhow::Result<()> {
+        if self.exit_on_stdin_eof {
+            thread::spawn(|| {
+                // The parent holds the other end of the pipe, so reading
+                // finishes, with an error or end of file, only once it is gone.
+                let _ = io::copy(&mut io::stdin().lock(), &mut io::sink());
+                log::info!("Standard input closed, stopping the Rojo server");
+                process::exit(0);
+            });
+        }
+
         let project_path = resolve_path(&self.project)?;
 
         let vfs = Vfs::new_default()?;

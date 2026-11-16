@@ -175,6 +175,42 @@ pub struct ServerInfoResponse {
     pub root_instance_id: Ref,
 }
 
+/// Response body from /api/agent/status
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStatusResponse {
+    pub session_id: SessionId,
+    pub server_version: String,
+    pub project_name: String,
+    /// Clients that finished their initial sync and receive live updates.
+    pub connected_clients: usize,
+    /// A connection request that no client has answered yet.
+    pub connect_request: Option<AgentConnectRequestInfo>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConnectRequestInfo {
+    pub id: u32,
+    pub place_id: Option<u64>,
+}
+
+/// Request body for /api/agent/connect. The body may also be empty.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConnectRequest {
+    #[serde(default)]
+    pub place_id: Option<u64>,
+}
+
+/// Response body from /api/agent/connect
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConnectResponse {
+    pub session_id: SessionId,
+    pub request: AgentConnectRequestInfo,
+}
+
 /// Response body from /api/read/{id}
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

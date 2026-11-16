@@ -7,7 +7,7 @@ mod assets;
 pub mod interface;
 mod origin;
 mod ui;
-mod util;
+pub(crate) mod util;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;

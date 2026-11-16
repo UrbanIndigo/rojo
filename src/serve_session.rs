@@ -12,6 +12,7 @@ use memofs::Vfs;
 use thiserror::Error;
 
 use crate::{
+    agent::AgentState,
     change_processor::ChangeProcessor,
     message_queue::MessageQueue,
     project::{Project, ProjectError},
@@ -85,6 +86,10 @@ pub struct ServeSession {
     /// A channel to send mutation requests on. These will be handled by the
     /// ChangeProcessor and trigger changes in the tree.
     tree_mutation_sender: Sender<PatchSet>,
+
+    /// Connection requests from agents and the clients currently connected,
+    /// which `rojo mcp` reports back to the agent.
+    agent: AgentState,
 }
 
 impl ServeSession {
@@ -145,6 +150,7 @@ impl ServeSession {
             message_queue,
             tree_mutation_sender,
             vfs,
+            agent: AgentState::new(),
         })
     }
 
@@ -218,6 +224,10 @@ impl ServeSession {
 
     pub fn root_project(&self) -> &Project {
         &self.root_project
+    }
+
+    pub fn agent(&self) -> &AgentState {
+        &self.agent
     }
 }
 

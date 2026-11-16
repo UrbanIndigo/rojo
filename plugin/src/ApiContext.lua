@@ -201,6 +201,14 @@ function ApiContext:connect()
 		end)
 end
 
+-- Agents using `rojo mcp` leave connection requests here. Unlike `connect`,
+-- this does not need a matching protocol version, so it stays cheap to poll.
+function ApiContext:getAgentStatus()
+	local url = ("%s/api/agent/status"):format(self.__baseUrl)
+
+	return Http.get(url):andThen(rejectFailedRequests):andThen(Http.Response.msgpack)
+end
+
 function ApiContext:read(ids)
 	local url = ("%s/api/read/%s"):format(self.__baseUrl, table.concat(ids, ","))
 

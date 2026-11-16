@@ -220,6 +220,15 @@ function SettingsPage:render()
 				layoutOrder = layoutIncrement(),
 			}),
 
+			AgentConnections = e(Setting, {
+				id = "agentConnections",
+				name = "Agent Connections",
+				description = "Connect when an AI agent using 'rojo mcp' asks to, using the host and port entered for connecting. Confirmation Behavior still applies",
+				tag = "unstable",
+				transparency = self.props.transparency,
+				layoutOrder = layoutIncrement(),
+			}),
+
 			OpenScriptsExternally = e(Setting, {
 				id = "openScriptsExternally",
 				name = "Open Scripts Externally",

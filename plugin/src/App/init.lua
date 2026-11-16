@@ -48,6 +48,11 @@ local AppStatus = strict("AppStatus", {
 
 local e = Roact.createElement
 
+-- Seconds between checks for connection requests from agents using `rojo mcp`.
+-- Agents wait on Studio, so this is short, and a request to a local server
+-- that is not there fails right away.
+local AGENT_CONNECT_POLL_INTERVAL = 2
+
 local App = Roact.Component:extend("App")
 
 function App:init()
@@ -149,6 +154,15 @@ function App:init()
 			end
 		end)
 
+		self:startAgentConnectPolling()
+		self.disconnectAgentConnectionsChanged = Settings:onChanged("agentConnections", function(enabled)
+			if enabled then
+				self:startAgentConnectPolling()
+			else
+				self:stopAgentConnectPolling()
+			end
+		end)
+
 		self:tryAutoReconnect():andThen(function(didReconnect)
 			if not didReconnect then
 				self:checkSyncReminder()
@@ -186,6 +200,11 @@ function App:willUnmount()
 	end
 
 	self:stopSyncReminderPolling()
+
+	if self.disconnectAgentConnectionsChanged then
+		self.disconnectAgentConnectionsChanged()
+	end
+	self:stopAgentConnectPolling()
 
 	self.autoConnectPlaytestServerListener()
 	self:clearRunningConnectionInfo()
@@ -554,6 +573,88 @@ function App:sendSyncReminder(message: string, shownActions: { string })
 				else nil,
 		},
 	})
+end
+
+function App:startAgentConnectPolling()
+	if self.agentConnectPollingThread ~= nil or not Settings:get("agentConnections") then
+		return
+	end
+
+	Log.trace("Starting agent connection polling thread")
+	self.agentConnectPollingThread = task.spawn(function()
+		while task.wait(AGENT_CONNECT_POLL_INTERVAL) do
+			if self.agentConnectPollingThread == nil then
+				-- The polling thread was stopped, so exit
+				return
+			end
+			if self.serveSession == nil and not self.checkingAgentConnectRequest then
+				self:checkAgentConnectRequest()
+			end
+		end
+	end)
+end
+
+function App:stopAgentConnectPolling()
+	if self.agentConnectPollingThread then
+		Log.trace("Stopping agent connection polling thread")
+		task.cancel(self.agentConnectPollingThread)
+		self.agentConnectPollingThread = nil
+	end
+end
+
+function App:checkAgentConnectRequest()
+	local host, port = self:getHostAndPort()
+	local baseUrl = if string.find(host, "^https?://")
+		then string.format("%s:%s", host, port)
+		else string.format("http://%s:%s", host, port)
+
+	self.checkingAgentConnectRequest = true
+
+	ApiContext.new(baseUrl)
+		:getAgentStatus()
+		:andThen(function(status)
+			local request = status.connectRequest
+			if request == nil then
+				return
+			end
+
+			-- Request IDs start over with every server, so the session ID is
+			-- needed to tell a new request from one that was already handled
+			local requestKey = string.format("%s:%s", tostring(status.sessionId), tostring(request.id))
+			if requestKey == self.lastAgentConnectRequest then
+				return
+			end
+			-- Handle each request only once, so declining the initial sync
+			-- does not lead straight into another connection attempt
+			self.lastAgentConnectRequest = requestKey
+
+			if request.placeId ~= nil and request.placeId ~= game.PlaceId then
+				Log.trace("Ignoring agent connection request for place {}", request.placeId)
+				return
+			end
+
+			if self.serveSession ~= nil then
+				return
+			end
+
+			Log.info("An agent asked to connect to project '{}'", status.projectName)
+			self:addNotification({
+				text = string.format("An agent asked to connect to project '%s'.", tostring(status.projectName)),
+				timeout = 10,
+			})
+			-- Show the widget, since the initial sync may need to be confirmed
+			self:setState({
+				guiEnabled = true,
+			})
+			self:startSession()
+		end)
+		:catch(function(err)
+			-- Most of the time no server is running, so this is expected
+			Log.trace("Could not check for agent connection requests: {}", err)
+		end)
+		:finally(function()
+			self.checkingAgentConnectRequest = false
+		end)
 end
 
 function App:isAutoConnectPlaytestServerAvailable()

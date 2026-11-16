@@ -7,11 +7,13 @@ pub mod cli;
 #[cfg(test)]
 mod tree_view;
 
+mod agent;
 mod auth_cookie;
 mod change_processor;
 mod glob;
 mod json;
 mod lua_ast;
+mod mcp;
 mod message_queue;
 mod multimap;
 mod path_serializer;

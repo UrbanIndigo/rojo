@@ -68,6 +68,19 @@ pub struct SourcemapCommand {
     /// Whether the sourcemap should use absolute paths instead of relative paths.
     #[clap(long)]
     pub absolute: bool,
+
+    /// Also list directories in `filePaths`, such as the folder an instance
+    /// is synced from. `rojo mcp` uses this to tell agents where an
+    /// instance's files live. Other tools expect files only.
+    #[clap(long, hide = true)]
+    pub include_directories: bool,
+}
+
+/// How paths are written into a sourcemap.
+#[derive(Debug, Clone, Copy)]
+struct PathOptions {
+    absolute: bool,
+    include_directories: bool,
 }
 
 impl SourcemapCommand {
@@ -88,6 +101,11 @@ impl SourcemapCommand {
             filter_non_scripts
         };
 
+        let path_options = PathOptions {
+            absolute: self.absolute,
+            include_directories: self.include_directories,
+        };
+
         // Pre-build a rayon threadpool with a low number of threads to avoid
         // dynamic creation overhead on systems with a high number of cpus.
         log::trace!("Setting rayon global threadpool");
@@ -97,7 +115,7 @@ impl SourcemapCommand {
             .ok();
 
         log::trace!("Writing initial sourcemap");
-        write_sourcemap(&session, self.output.as_deref(), filter, self.absolute)?;
+        write_sourcemap(&session, self.output.as_deref(), filter, path_options)?;
 
         if self.watch {
             log::trace!("Setting up runtime for watch mode");
@@ -114,7 +132,7 @@ impl SourcemapCommand {
                 cursor = new_cursor;
 
                 if patch_set_affects_sourcemap(&session, &patch_set, filter) {
-                    write_sourcemap(&session, self.output.as_deref(), filter, self.absolute)?;
+                    write_sourcemap(&session, self.output.as_deref(), filter, path_options)?;
                 }
             }
         }
@@ -180,7 +198,7 @@ fn recurse_create_node<'a>(
     referent: Ref,
     project_dir: &Path,
     filter: fn(&InstanceWithMeta) -> bool,
-    use_absolute_paths: bool,
+    path_options: PathOptions,
 ) -> Option<SourcemapNode<'a>> {
     let instance = tree.get_instance(referent).expect("instance did not exist");
 
@@ -188,7 +206,7 @@ fn recurse_create_node<'a>(
         .children()
         .par_iter()
         .filter_map(|&child_id| {
-            recurse_create_node(tree, child_id, project_dir, filter, use_absolute_paths)
+            recurse_create_node(tree, child_id, project_dir, filter, path_options)
         })
         .collect();
 
@@ -203,13 +221,13 @@ fn recurse_create_node<'a>(
         .relevant_paths
         .iter()
         // Not all paths listed as relevant are guaranteed to exist.
-        .filter(|path| path.is_file())
+        .filter(|path| path.is_file() || (path_options.include_directories && path.is_dir()))
         .map(|path| path.as_path());
 
     let mut output_file_paths: Vec<Cow<'a, Path>> =
         Vec::with_capacity(instance.metadata().relevant_paths.len());
 
-    if use_absolute_paths {
+    if path_options.absolute {
         // It's somewhat important to note here that `path::absolute` takes in a Path and returns a PathBuf
         for val in file_paths {
             output_file_paths.push(Cow::Owned(
@@ -236,7 +254,7 @@ fn write_sourcemap(
     session: &ServeSession,
     output: Option<&Path>,
     filter: fn(&InstanceWithMeta) -> bool,
-    use_absolute_paths: bool,
+    path_options: PathOptions,
 ) -> anyhow::Result<()> {
     let tree = session.tree();
 
@@ -245,7 +263,7 @@ fn write_sourcemap(
         tree.get_root_id(),
         session.root_dir(),
         filter,
-        use_absolute_paths,
+        path_options,
     );
 
     if let Some(output_path) = output {
@@ -319,6 +337,7 @@ mod test {
             include_non_scripts: false,
             watch: false,
             absolute: false,
+            include_directories: false,
         };
         assert!(sourcemap_command.run().is_ok());
 
@@ -345,6 +364,7 @@ mod test {
             include_non_scripts: false,
             watch: false,
             absolute: true,
+            include_directories: false,
         };
         assert!(sourcemap_command.run().is_ok());
 
@@ -369,5 +389,52 @@ mod test {
                 format!("[...{} path{} omitted...]", paths_count, if paths_count != 1 { "s" } else { "" } )
             })
         });
+    }
+
+    #[test]
+    fn lists_directories_only_when_asked() {
+        let project_path = fs_err::canonicalize(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("test-projects")
+                .join("relative_paths")
+                .join("project"),
+        )
+        .unwrap();
+
+        let paths_of_project_folder = |include_directories: bool| {
+            let sourcemap_dir = tempfile::tempdir().unwrap();
+            let sourcemap_output = sourcemap_dir.path().join("sourcemap.json");
+            let sourcemap_command = SourcemapCommand {
+                project: project_path.clone(),
+                output: Some(sourcemap_output.clone()),
+                include_non_scripts: true,
+                watch: false,
+                absolute: false,
+                include_directories,
+            };
+            assert!(sourcemap_command.run().is_ok());
+
+            let contents = fs_err::read_to_string(sourcemap_output).unwrap();
+            let sourcemap: serde_json::Value = serde_json::from_str(&contents).unwrap();
+            // ReplicatedStorage.Project, which is synced from `src/`.
+            sourcemap["children"][0]["children"][0]["filePaths"].clone()
+        };
+
+        let folder = serde_json::json!("src");
+        let without = paths_of_project_folder(false);
+        let with = paths_of_project_folder(true);
+
+        // The instance is a module script made from `src/init.luau`, so that
+        // file is listed either way.
+        assert!(without
+            .as_array()
+            .unwrap()
+            .contains(&"src/init.luau".into()));
+        assert!(!without.as_array().unwrap().contains(&folder));
+        assert!(
+            with.as_array().unwrap().contains(&folder),
+            "the folder an instance is synced from should be listed: {}",
+            with
+        );
     }
 }

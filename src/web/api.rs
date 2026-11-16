@@ -20,9 +20,10 @@ use crate::{
     snapshot::{InstanceWithMeta, PatchSet, PatchUpdate},
     web::{
         interface::{
-            ErrorResponse, Instance, MessagesPacket, OpenResponse, ReadResponse,
-            ServerInfoResponse, SocketPacket, SocketPacketBody, SocketPacketType, SubscribeMessage,
-            WriteRequest, WriteResponse, PROTOCOL_VERSION, SERVER_VERSION,
+            AgentConnectRequest, AgentConnectRequestInfo, AgentConnectResponse,
+            AgentStatusResponse, ErrorResponse, Instance, MessagesPacket, OpenResponse,
+            ReadResponse, ServerInfoResponse, SocketPacket, SocketPacketBody, SocketPacketType,
+            SubscribeMessage, WriteRequest, WriteResponse, PROTOCOL_VERSION, SERVER_VERSION,
         },
         origin::canonical,
         util::{deserialize_msgpack, msgpack, msgpack_ok, serialize_msgpack},
@@ -63,6 +64,9 @@ pub async fn call(
             service.handle_api_open(request).await
         }
         (&Method::POST, "/api/write") => service.handle_api_write(request).await,
+
+        (&Method::GET, "/api/agent/status") => service.handle_api_agent_status(),
+        (&Method::POST, "/api/agent/connect") => service.handle_api_agent_connect(request).await,
 
         (_method, path) => msgpack(
             ErrorResponse::not_found(format!("Route not found: {}", path)),
@@ -138,6 +142,73 @@ impl ApiService {
         });
 
         response
+    }
+
+    /// Report whether a client is connected and whether an agent's connection
+    /// request is still waiting. Plugins with agent connections enabled poll
+    /// this to find requests, and `rojo mcp` polls it to see the result.
+    fn handle_api_agent_status(&self) -> Response<Body> {
+        let agent = self.serve_session.agent();
+
+        msgpack_ok(AgentStatusResponse {
+            session_id: self.serve_session.session_id(),
+            server_version: SERVER_VERSION.to_owned(),
+            project_name: self.serve_session.project_name().to_owned(),
+            connected_clients: agent.connected_clients(),
+            connect_request: agent
+                .pending_request()
+                .map(|request| AgentConnectRequestInfo {
+                    id: request.id,
+                    place_id: request.place_id,
+                }),
+        })
+    }
+
+    /// Ask Studio clients that opted into agent connections to connect.
+    async fn handle_api_agent_connect(&self, request: Request<Body>) -> Response<Body> {
+        // A connection request makes Studio pull in this project, so like
+        // /api/open it is limited to processes on this machine, even when the
+        // server is bound to an address reachable from the network.
+        if !canonical(self.remote_addr.ip()).is_loopback() {
+            return msgpack(
+                ErrorResponse::forbidden("/api/agent/connect is only available to local clients"),
+                StatusCode::FORBIDDEN,
+            );
+        }
+
+        let body = match read_request_body(request.into_body()).await {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
+
+        let connect: AgentConnectRequest = if body.is_empty() {
+            AgentConnectRequest::default()
+        } else {
+            match deserialize_msgpack(&body) {
+                Ok(connect) => connect,
+                Err(err) => {
+                    return msgpack(
+                        ErrorResponse::bad_request(format!("Invalid body: {}", err)),
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+            }
+        };
+
+        let request = self
+            .serve_session
+            .agent()
+            .request_connection(connect.place_id);
+
+        log::info!("An agent requested a Studio connection");
+
+        msgpack_ok(AgentConnectResponse {
+            session_id: self.serve_session.session_id(),
+            request: AgentConnectRequestInfo {
+                id: request.id,
+                place_id: request.place_id,
+            },
+        })
     }
 
     async fn handle_api_write(&self, request: Request<Body>) -> Response<Body> {
@@ -472,6 +543,9 @@ impl ApiService {
     }
 }
 
+// The error is a finished response that handlers return right away, so boxing
+// it would only add noise at every call site.
+#[allow(clippy::result_large_err)]
 async fn read_request_body(body: Body) -> Result<Bytes, Response<Body>> {
     body::to_bytes(body).await.map_err(|err| {
         msgpack(
@@ -526,6 +600,10 @@ async fn handle_websocket_subscription(
         "WebSocket subscription established for session {}",
         session_id
     );
+
+    // Clients only subscribe once their initial sync went through, so this is
+    // what agents waiting on a connection request look for.
+    let _connected_client = serve_session.agent().client_connected();
 
     // Now continuously listen for new messages using select to handle both incoming messages
     // and WebSocket control messages concurrently

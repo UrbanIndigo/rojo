@@ -47,6 +47,9 @@ Making a new release? Simply add the new header with the version and date undern
 * Fixed double clicking Connect in the plugin starting two sessions. ([#1310])
 * The plugin now shows a descriptive error when the Rojo server closes while connected. ([#1287])
 * Rojo now returns a structured error response instead of panicking when `serve` API request bodies fail to read. ([#1276])
+* Added `rojo mcp`, a Model Context Protocol server that lets AI agents serve projects, have Studio connect, build, write sourcemaps, and look up which files make up which instances. See `docs/mcp.md`.
+* Added the plugin setting "Agent Connections". When it is on, the plugin connects when an agent using `rojo mcp` asks it to. Confirmation Behavior still applies.
+* `rojo serve` now has `/api/agent/status` and `/api/agent/connect` endpoints, which report connected clients and let local agents request a Studio connection.
 
 [#1228]: https://github.com/rojo-rbx/rojo/pull/1228
 [#1276]: https://github.com/rojo-rbx/rojo/pull/1276
