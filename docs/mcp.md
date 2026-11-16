@@ -35,9 +35,9 @@
 
 The plugin cannot be reached from outside Studio, so it checks the server every two seconds while it is not connected. When an agent calls `studio_connect`, the server records a connection request, the plugin sees it and connects as if Connect had been clicked, and the agent is told once the initial sync went through.
 
-- The plugin checks the host and port entered on its Connect page, `localhost:34872` by default. `serve_start` uses the project's `servePort`, or 34872, so the two match unless you change one of them.
+- The plugin checks the host and port entered on its Connect page, and localhost ports 34872 to 34881. `serve_start` uses the project's `servePort`, or 34872, so servers on any of those ports are found without setting anything in Studio.
+- Every plugin that is not connected sees a request, and the first one to claim it connects. With several Studio windows open, pass `place_id` or `place_name` to `studio_connect` so the right one answers. `place_name` is the name Studio shows for the place; a place opened from a file is named after the file, such as `lobby.rbxl`, which tells local files apart, since they all have place ID 0.
 - **Confirmation Behavior** still applies. With the default, the plugin asks you to accept the first sync, and the agent waits for that. Set it to *Never* or *Unlisted PlaceId* (with `servePlaceIds` in the project) for agents to connect without anyone at the keyboard.
-- `studio_connect` takes a `place_id` when several places are open, so only that place connects.
 - A request is answered once, and expires after two minutes. Declining the sync does not lead to another attempt until the agent asks again.
 - Only processes on the same machine can make requests, even when the server is bound to a network address.
 
@@ -63,5 +63,6 @@ Instance paths look like `ReplicatedStorage.Shared.Util`, optionally starting wi
 
 Agents that talk to `rojo serve` directly can use the same two endpoints `rojo mcp` uses. Both use MessagePack, like the rest of the API.
 
-- `GET /api/agent/status` returns `sessionId`, `serverVersion`, `projectName`, `connectedClients` (clients that finished their initial sync), and `connectRequest` (`{ id, placeId }` or nil).
-- `POST /api/agent/connect` with an optional `{ placeId }` body records a connection request and returns it. Only local clients may call it.
+- `GET /api/agent/status` returns `sessionId`, `serverVersion`, `projectName`, `connectedClients` (clients that finished their initial sync), and `connectRequest` (`{ id, placeId, placeName }` or nil).
+- `POST /api/agent/connect` with an optional `{ placeId, placeName }` body records a connection request and returns it. Only local clients may call it.
+- `POST /api/agent/claim` with `{ id }` hands the pending request to the caller and returns `{ claimed }`. Only the first claim of a request succeeds; plugins claim a request before they connect.

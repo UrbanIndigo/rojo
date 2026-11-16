@@ -53,14 +53,34 @@ local e = Roact.createElement
 -- that is not there fails right away.
 local AGENT_CONNECT_POLL_INTERVAL = 2
 
--- Local files all have place ID 0, so their saved endpoints are keyed by file
--- name instead. Studio names the data model after the file when it opens it;
--- the key is taken once, before a sync can rename it. Studio stores setting
--- keys with dots replaced, so the name is reduced to the same characters.
-local priorSyncKey = if game.PlaceId == 0
-	then "file:" .. string.gsub(game.Name, "[^%w_%-]", "_")
-	elseif ignorePlaceIds[tostring(game.PlaceId)] then nil
-	else tostring(game.PlaceId)
+-- Besides the host and port on the Connect page, the plugin checks this many
+-- localhost ports from the default one for connection requests, so an agent
+-- reaches Studio whichever port its project serves on. Must match
+-- `AGENT_SCAN_PORTS` in src/mcp/serve.rs.
+local AGENT_SCAN_PORTS = 10
+
+-- Agents can address a Studio window by place name. Studio names a place
+-- opened from a file after the file, and a sync may rename the data model
+-- later, so the name it had when the plugin loaded counts too.
+local openedPlaceName = game.Name
+
+local function baseUrlOf(host: string, port: string): string
+	return if string.find(host, "^https?://")
+		then string.format("%s:%s", host, port)
+		else string.format("http://%s:%s", host, port)
+end
+
+local function isForThisPlace(request): boolean
+	if request.placeId ~= nil and request.placeId ~= game.PlaceId then
+		return false
+	end
+
+	if request.placeName ~= nil and request.placeName ~= openedPlaceName and request.placeName ~= game.Name then
+		return false
+	end
+
+	return true
+end
 
 local App = Roact.Component:extend("App")
 
@@ -74,6 +94,7 @@ function App:init()
 	self.confirmationBindable = Instance.new("BindableEvent")
 	self.confirmationEvent = self.confirmationBindable.Event
 	self.knownProjects = {}
+	self.handledAgentRequests = {}
 	self.notifId = 0
 
 	self.waypointConnection = ChangeHistoryService.OnUndo:Connect(function(action: string)
@@ -289,11 +310,12 @@ function App:getPriorSyncInfo(): { host: string?, port: string?, projectName: st
 		return {}
 	end
 
-	if priorSyncKey == nil then
+	local id = tostring(game.PlaceId)
+	if ignorePlaceIds[id] then
 		return {}
 	end
 
-	return priorSyncInfos[priorSyncKey] or {}
+	return priorSyncInfos[id] or {}
 end
 
 function App:setPriorSyncInfo(host: string, port: string, projectName: string)
@@ -312,11 +334,12 @@ function App:setPriorSyncInfo(host: string, port: string, projectName: string)
 		end
 	end
 
-	if priorSyncKey == nil then
+	local id = tostring(game.PlaceId)
+	if ignorePlaceIds[id] then
 		return
 	end
 
-	priorSyncInfos[priorSyncKey] = {
+	priorSyncInfos[id] = {
 		host = if host ~= Config.defaultHost then host else nil,
 		port = if port ~= Config.defaultPort then port else nil,
 		projectName = projectName,
@@ -333,10 +356,8 @@ function App:forgetPriorSyncInfo()
 		priorSyncInfos = {}
 	end
 
-	if priorSyncKey == nil then
-		return
-	end
-	priorSyncInfos[priorSyncKey] = nil
+	local id = tostring(game.PlaceId)
+	priorSyncInfos[id] = nil
 	Log.trace("Erased last used endpoint for {}", game.PlaceId)
 
 	Settings:set("priorEndpoints", priorSyncInfos)
@@ -611,38 +632,51 @@ function App:stopAgentConnectPolling()
 	end
 end
 
-function App:checkAgentConnectRequest()
+-- The host and port on the Connect page, then localhost ports from the
+-- default one.
+function App:getAgentEndpoints(): { { host: string, port: string } }
 	local host, port = self:getHostAndPort()
-	local baseUrl = if string.find(host, "^https?://")
-		then string.format("%s:%s", host, port)
-		else string.format("http://%s:%s", host, port)
+	local endpoints = { { host = host, port = port } }
+	local seen = { [host .. ":" .. port] = true }
 
-	self.checkingAgentConnectRequest = true
+	local first = tonumber(Config.defaultPort)
+	for offset = 0, AGENT_SCAN_PORTS - 1 do
+		local scanned = tostring(first + offset)
+		local key = Config.defaultHost .. ":" .. scanned
+		if not seen[key] then
+			seen[key] = true
+			table.insert(endpoints, { host = Config.defaultHost, port = scanned })
+		end
+	end
 
-	ApiContext.new(baseUrl)
-		:getAgentStatus()
-		:andThen(function(status)
-			local request = status.connectRequest
-			if request == nil then
-				return
-			end
+	return endpoints
+end
 
-			-- Request IDs start over with every server, so the session ID is
-			-- needed to tell a new request from one that was already handled
-			local requestKey = string.format("%s:%s", tostring(status.sessionId), tostring(request.id))
-			if requestKey == self.lastAgentConnectRequest then
-				return
-			end
-			-- Handle each request only once, so declining the initial sync
-			-- does not lead straight into another connection attempt
-			self.lastAgentConnectRequest = requestKey
+-- Whether a request is new and meant for this place. Each request is looked
+-- at once, so declining the initial sync does not lead straight into another
+-- connection attempt.
+function App:takesAgentRequest(status, request): boolean
+	-- Request IDs start over with every server, so the session ID is needed
+	-- to tell a new request from one that was already handled
+	local requestKey = string.format("%s:%s", tostring(status.sessionId), tostring(request.id))
+	if self.handledAgentRequests[requestKey] then
+		return false
+	end
+	self.handledAgentRequests[requestKey] = true
 
-			if request.placeId ~= nil and request.placeId ~= game.PlaceId then
-				Log.trace("Ignoring agent connection request for place {}", request.placeId)
-				return
-			end
+	if not isForThisPlace(request) then
+		Log.trace("Ignoring agent connection request {} for another place", requestKey)
+		return false
+	end
 
-			if self.serveSession ~= nil then
+	return true
+end
+
+function App:answerAgentRequest(endpoint, status, request)
+	return ApiContext.new(baseUrlOf(endpoint.host, endpoint.port))
+		:claimAgentRequest(request.id)
+		:andThen(function(claimed)
+			if not claimed or self.serveSession ~= nil then
 				return
 			end
 
@@ -651,15 +685,47 @@ function App:checkAgentConnectRequest()
 				text = string.format("An agent asked to connect to project '%s'.", tostring(status.projectName)),
 				timeout = 10,
 			})
+			self.setHost(endpoint.host)
+			self.setPort(endpoint.port)
 			-- Show the widget, since the initial sync may need to be confirmed
 			self:setState({
 				guiEnabled = true,
 			})
 			self:startSession()
 		end)
+end
+
+function App:checkAgentConnectRequest()
+	self.checkingAgentConnectRequest = true
+
+	local endpoints = self:getAgentEndpoints()
+	local statuses = {}
+	local checks = {}
+	for index, endpoint in endpoints do
+		checks[index] = ApiContext.new(baseUrlOf(endpoint.host, endpoint.port))
+			:getAgentStatus()
+			:andThen(function(status)
+				statuses[index] = status
+			end)
+			:catch(function(err)
+				-- Most of the time no server is running there, so this is expected
+				Log.trace("Could not check {}:{} for agent connection requests: {}", endpoint.host, endpoint.port, err)
+			end)
+	end
+
+	Promise.all(checks)
+		:andThen(function()
+			for index, endpoint in endpoints do
+				local status = statuses[index]
+				local request = status and status.connectRequest
+				if request ~= nil and self:takesAgentRequest(status, request) then
+					return self:answerAgentRequest(endpoint, status, request)
+				end
+			end
+			return nil
+		end)
 		:catch(function(err)
-			-- Most of the time no server is running, so this is expected
-			Log.trace("Could not check for agent connection requests: {}", err)
+			Log.trace("Could not answer an agent connection request: {}", err)
 		end)
 		:finally(function()
 			self.checkingAgentConnectRequest = false

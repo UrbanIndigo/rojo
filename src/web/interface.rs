@@ -188,11 +188,13 @@ pub struct AgentStatusResponse {
     pub connect_request: Option<AgentConnectRequestInfo>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConnectRequestInfo {
     pub id: u32,
     pub place_id: Option<u64>,
+    #[serde(default)]
+    pub place_name: Option<String>,
 }
 
 /// Request body for /api/agent/connect. The body may also be empty.
@@ -201,6 +203,23 @@ pub struct AgentConnectRequestInfo {
 pub struct AgentConnectRequest {
     #[serde(default)]
     pub place_id: Option<u64>,
+    #[serde(default)]
+    pub place_name: Option<String>,
+}
+
+/// Request body for /api/agent/claim
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentClaimRequest {
+    pub id: u32,
+}
+
+/// Response body from /api/agent/claim
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentClaimResponse {
+    /// Whether this client got the request. Only the first claim succeeds.
+    pub claimed: bool,
 }
 
 /// Response body from /api/agent/connect

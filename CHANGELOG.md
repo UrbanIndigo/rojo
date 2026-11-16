@@ -48,8 +48,7 @@ Making a new release? Simply add the new header with the version and date undern
 * The plugin now shows a descriptive error when the Rojo server closes while connected. ([#1287])
 * Rojo now returns a structured error response instead of panicking when `serve` API request bodies fail to read. ([#1276])
 * Added `rojo mcp`, a Model Context Protocol server that lets AI agents serve projects, have Studio connect, build, write sourcemaps, and look up which files make up which instances. See `docs/mcp.md`.
-* Added the plugin setting "Agent Connections". When it is on, the plugin connects when an agent using `rojo mcp` asks it to. Confirmation Behavior still applies.
-* The plugin now remembers the last used host and port for local place files by file name. They all have place ID 0, so before, no file kept its own port and agents could not tell two open files apart.
+* Added the plugin setting "Agent Connections". When it is on, the plugin connects when an agent using `rojo mcp` asks it to. Confirmation Behavior still applies. Besides its Connect page host and port, the plugin checks localhost ports 34872 to 34881, and claims a request before connecting so only one Studio window answers it. `studio_connect` takes a `place_name`, matched against the name Studio gives the place (the file name for a local file).
 * `rojo serve` now has `/api/agent/status` and `/api/agent/connect` endpoints, which report connected clients and let local agents request a Studio connection.
 
 [#1228]: https://github.com/rojo-rbx/rojo/pull/1228

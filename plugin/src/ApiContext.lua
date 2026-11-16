@@ -209,6 +209,18 @@ function ApiContext:getAgentStatus()
 	return Http.get(url):andThen(rejectFailedRequests):andThen(Http.Response.msgpack)
 end
 
+-- Every plugin polling a server sees its connection request, so a plugin
+-- claims it first and only connects if the claim succeeded. Resolves to
+-- whether this plugin got the request.
+function ApiContext:claimAgentRequest(id)
+	local url = ("%s/api/agent/claim"):format(self.__baseUrl)
+	local body = Http.msgpackEncode({ id = id })
+
+	return Http.post(url, body):andThen(rejectFailedRequests):andThen(Http.Response.msgpack):andThen(function(response)
+		return response.claimed == true
+	end)
+end
+
 function ApiContext:read(ids)
 	local url = ("%s/api/read/%s"):format(self.__baseUrl, table.concat(ids, ","))
 

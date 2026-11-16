@@ -20,10 +20,11 @@ use crate::{
     snapshot::{InstanceWithMeta, PatchSet, PatchUpdate},
     web::{
         interface::{
-            AgentConnectRequest, AgentConnectRequestInfo, AgentConnectResponse,
-            AgentStatusResponse, ErrorResponse, Instance, MessagesPacket, OpenResponse,
-            ReadResponse, ServerInfoResponse, SocketPacket, SocketPacketBody, SocketPacketType,
-            SubscribeMessage, WriteRequest, WriteResponse, PROTOCOL_VERSION, SERVER_VERSION,
+            AgentClaimRequest, AgentClaimResponse, AgentConnectRequest, AgentConnectRequestInfo,
+            AgentConnectResponse, AgentStatusResponse, ErrorResponse, Instance, MessagesPacket,
+            OpenResponse, ReadResponse, ServerInfoResponse, SocketPacket, SocketPacketBody,
+            SocketPacketType, SubscribeMessage, WriteRequest, WriteResponse, PROTOCOL_VERSION,
+            SERVER_VERSION,
         },
         origin::canonical,
         util::{deserialize_msgpack, msgpack, msgpack_ok, serialize_msgpack},
@@ -67,6 +68,7 @@ pub async fn call(
 
         (&Method::GET, "/api/agent/status") => service.handle_api_agent_status(),
         (&Method::POST, "/api/agent/connect") => service.handle_api_agent_connect(request).await,
+        (&Method::POST, "/api/agent/claim") => service.handle_api_agent_claim(request).await,
 
         (_method, path) => msgpack(
             ErrorResponse::not_found(format!("Route not found: {}", path)),
@@ -160,6 +162,7 @@ impl ApiService {
                 .map(|request| AgentConnectRequestInfo {
                     id: request.id,
                     place_id: request.place_id,
+                    place_name: request.place_name,
                 }),
         })
     }
@@ -198,7 +201,7 @@ impl ApiService {
         let request = self
             .serve_session
             .agent()
-            .request_connection(connect.place_id);
+            .request_connection(connect.place_id, connect.place_name);
 
         log::info!("An agent requested a Studio connection");
 
@@ -207,7 +210,32 @@ impl ApiService {
             request: AgentConnectRequestInfo {
                 id: request.id,
                 place_id: request.place_id,
+                place_name: request.place_name,
             },
+        })
+    }
+
+    /// Give a pending connection request to the plugin that asks first. Every
+    /// plugin with agent connections on sees the request, and only the one
+    /// whose claim succeeds connects.
+    async fn handle_api_agent_claim(&self, request: Request<Body>) -> Response<Body> {
+        let body = match read_request_body(request.into_body()).await {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
+
+        let claim: AgentClaimRequest = match deserialize_msgpack(&body) {
+            Ok(claim) => claim,
+            Err(err) => {
+                return msgpack(
+                    ErrorResponse::bad_request(format!("Invalid body: {}", err)),
+                    StatusCode::BAD_REQUEST,
+                );
+            }
+        };
+
+        msgpack_ok(AgentClaimResponse {
+            claimed: self.serve_session.agent().claim(claim.id),
         })
     }
 

@@ -19,7 +19,7 @@ use std::{
 pub const CONNECT_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// A request from an agent for a Studio client to connect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectRequest {
     /// Increments with every request in a serve session, so a plugin can tell
     /// a new request from one it already handled.
@@ -27,6 +27,11 @@ pub struct ConnectRequest {
 
     /// Only a Studio client with this place ID should respond, when set.
     pub place_id: Option<u64>,
+
+    /// Only a Studio client whose place has this name should respond, when
+    /// set. Studio names a place opened from a file after the file, so this
+    /// tells apart local files, which all have place ID 0.
+    pub place_name: Option<String>,
 }
 
 #[derive(Debug)]
@@ -67,22 +72,52 @@ impl AgentState {
     }
 
     /// Asks a Studio client to connect, replacing any earlier request.
-    pub fn request_connection(&self, place_id: Option<u64>) -> ConnectRequest {
-        self.request_connection_at(place_id, Instant::now())
+    pub fn request_connection(
+        &self,
+        place_id: Option<u64>,
+        place_name: Option<String>,
+    ) -> ConnectRequest {
+        self.request_connection_at(place_id, place_name, Instant::now())
     }
 
-    fn request_connection_at(&self, place_id: Option<u64>, now: Instant) -> ConnectRequest {
+    fn request_connection_at(
+        &self,
+        place_id: Option<u64>,
+        place_name: Option<String>,
+        now: Instant,
+    ) -> ConnectRequest {
         let request = ConnectRequest {
             id: self.last_request_id.fetch_add(1, Ordering::SeqCst) + 1,
             place_id,
+            place_name,
         };
 
         *self.pending.lock().unwrap() = Some(PendingRequest {
-            request,
+            request: request.clone(),
             created: now,
         });
 
         request
+    }
+
+    /// Hands the pending request to the first plugin that asks for it. Every
+    /// plugin polling this server sees the request, and only the one that
+    /// claims it connects, so two open Studio windows never both answer.
+    pub fn claim(&self, id: u32) -> bool {
+        self.claim_at(id, Instant::now())
+    }
+
+    fn claim_at(&self, id: u32, now: Instant) -> bool {
+        let mut pending = self.pending.lock().unwrap();
+        let claimable = pending.as_ref().is_some_and(|entry| {
+            entry.request.id == id && now.duration_since(entry.created) < CONNECT_REQUEST_TIMEOUT
+        });
+
+        if claimable {
+            *pending = None;
+        }
+
+        claimable
     }
 
     /// The connection request that is waiting for a client, if any.
@@ -95,7 +130,7 @@ impl AgentState {
 
         match &*pending {
             Some(entry) if now.duration_since(entry.created) < CONNECT_REQUEST_TIMEOUT => {
-                Some(entry.request)
+                Some(entry.request.clone())
             }
             Some(_) => {
                 *pending = None;
@@ -142,18 +177,20 @@ mod test {
         let state = AgentState::new();
         assert_eq!(state.pending_request(), None);
 
-        let first = state.request_connection(None);
-        let second = state.request_connection(Some(1234));
+        let first = state.request_connection(None, None);
+        let second = state.request_connection(Some(1234), Some("lobby.rbxl".to_owned()));
 
         assert!(second.id > first.id);
         assert_eq!(state.pending_request(), Some(second));
-        assert_eq!(state.pending_request().unwrap().place_id, Some(1234));
+        let pending = state.pending_request().unwrap();
+        assert_eq!(pending.place_id, Some(1234));
+        assert_eq!(pending.place_name.as_deref(), Some("lobby.rbxl"));
     }
 
     #[test]
     fn a_connecting_client_answers_the_pending_request() {
         let state = AgentState::new();
-        state.request_connection(None);
+        state.request_connection(None, None);
 
         let _client = state.client_connected();
 
@@ -161,10 +198,32 @@ mod test {
     }
 
     #[test]
+    fn only_the_first_claim_of_a_request_succeeds() {
+        let state = AgentState::new();
+        let request = state.request_connection(None, None);
+
+        assert!(!state.claim(request.id + 1));
+        assert!(state.claim(request.id));
+        assert!(!state.claim(request.id));
+        assert_eq!(state.pending_request(), None);
+    }
+
+    #[test]
+    fn a_replaced_or_expired_request_cannot_be_claimed() {
+        let state = AgentState::new();
+        let start = Instant::now();
+        let first = state.request_connection_at(None, None, start);
+        let second = state.request_connection_at(None, None, start);
+
+        assert!(!state.claim_at(first.id, start));
+        assert!(!state.claim_at(second.id, start + CONNECT_REQUEST_TIMEOUT));
+    }
+
+    #[test]
     fn connection_requests_expire() {
         let state = AgentState::new();
         let start = Instant::now();
-        let request = state.request_connection_at(None, start);
+        let request = state.request_connection_at(None, None, start);
 
         assert_eq!(
             state.pending_request_at(start + CONNECT_REQUEST_TIMEOUT - Duration::from_secs(1)),

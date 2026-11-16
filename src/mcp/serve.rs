@@ -30,6 +30,11 @@ use crate::{
 /// The port `rojo serve` and the Studio plugin use when nothing else is set.
 pub const DEFAULT_PORT: u16 = 34872;
 
+/// How many localhost ports, starting at the default, the plugin checks for
+/// connection requests besides the one on its Connect page. Must match
+/// `AGENT_SCAN_PORTS` in the plugin.
+pub const AGENT_SCAN_PORTS: u16 = 10;
+
 /// Lines of server output kept for `serve_logs`.
 const MAX_LOG_LINES: usize = 1000;
 
@@ -337,6 +342,7 @@ impl ServeManager {
         &self,
         port: Option<u16>,
         place_id: Option<u64>,
+        place_name: Option<&str>,
         wait: Duration,
     ) -> Result<String, String> {
         let address = {
@@ -358,7 +364,7 @@ impl ServeManager {
         };
 
         let before = self.status_at(address)?;
-        if before.connected_clients > 0 && place_id.is_none() {
+        if before.connected_clients > 0 && place_id.is_none() && place_name.is_none() {
             return Ok(format!(
                 "Studio is already connected to project '{}' on port {} ({} client(s)).",
                 before.project_name,
@@ -367,7 +373,7 @@ impl ServeManager {
             ));
         }
 
-        let request = self.request_connection(address, place_id)?;
+        let request = self.request_connection(address, place_id, place_name)?;
 
         let deadline = Instant::now() + wait;
         loop {
@@ -398,17 +404,19 @@ impl ServeManager {
                 return Ok(format!(
                     "Asked Studio to connect to port {}, but no client has connected yet{}.\n\
                      For Studio to connect on its own, it must be open with the Rojo plugin's \
-                     \"Agent Connections\" setting on, and the plugin must be set to this host \
-                     and port (localhost:{} is the default). If the plugin asks to confirm the \
-                     first sync, someone has to accept it in Studio. The request stays open for \
-                     2 minutes; check with serve_status.",
+                     \"Agent Connections\" setting on. The plugin checks the host and port on \
+                     its Connect page and localhost ports {} to {}. If a place_id or place_name \
+                     was given, it must match the place open in Studio. If the plugin asks to \
+                     confirm the first sync, someone has to accept it in Studio. The request \
+                     stays open for 2 minutes; check with serve_status.",
                     address.port(),
                     if still_pending {
                         ""
                     } else {
                         " and the request was answered or expired"
                     },
-                    DEFAULT_PORT
+                    DEFAULT_PORT,
+                    DEFAULT_PORT + AGENT_SCAN_PORTS - 1
                 ));
             }
 
@@ -431,9 +439,13 @@ impl ServeManager {
         &self,
         address: SocketAddr,
         place_id: Option<u64>,
+        place_name: Option<&str>,
     ) -> Result<AgentConnectResponse, String> {
-        let body = serialize_msgpack(AgentConnectRequest { place_id })
-            .map_err(|err| format!("Could not encode the connection request: {}", err))?;
+        let body = serialize_msgpack(AgentConnectRequest {
+            place_id,
+            place_name: place_name.map(str::to_owned),
+        })
+        .map_err(|err| format!("Could not encode the connection request: {}", err))?;
 
         let response = self
             .client
@@ -502,6 +514,9 @@ fn describe_status(status: &AgentStatusResponse) -> String {
         );
         if let Some(place_id) = request.place_id {
             let _ = write!(out, " (place {})", place_id);
+        }
+        if let Some(place_name) = &request.place_name {
+            let _ = write!(out, " (place '{}')", place_name);
         }
     }
 

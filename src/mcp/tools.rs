@@ -106,8 +106,10 @@ pub fn definitions() -> Value {
             "title": "Connect Studio",
             "description": "Ask Roblox Studio to connect to a Rojo server and wait for it. This \
                             works when Studio is open with the Rojo plugin's \"Agent \
-                            Connections\" setting on and the plugin is set to the server's host \
-                            and port. Returns once Studio connected or the wait ran out.",
+                            Connections\" setting on; the plugin finds servers on its Connect \
+                            page's port and on localhost ports 34872 to 34881. With several \
+                            Studio windows open, pass place_id or place_name so the right one \
+                            connects. Returns once Studio connected or the wait ran out.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -118,6 +120,13 @@ pub fn definitions() -> Value {
                         "minimum": 0,
                         "description": "Only a Studio window with this place open should \
                                         connect. Useful when several places are open.",
+                    },
+                    "place_name": {
+                        "type": "string",
+                        "description": "Only a Studio window whose place has this name \
+                                        should connect. A place opened from a file is named \
+                                        after the file, such as \"lobby.rbxl\", so this tells \
+                                        local files apart.",
                     },
                     "wait_seconds": {
                         "type": "integer",
@@ -400,12 +409,13 @@ impl Tools {
     fn studio_connect(&self, args: &Args) -> Result<String, String> {
         let port = args.port("port")?;
         let place_id = args.integer("place_id", 0, u64::MAX)?;
+        let place_name = args.string("place_name")?;
         let wait = args
             .integer("wait_seconds", 0, MAX_CONNECT_WAIT)?
             .unwrap_or(DEFAULT_CONNECT_WAIT);
 
         self.serve
-            .connect_studio(port, place_id, Duration::from_secs(wait))
+            .connect_studio(port, place_id, place_name, Duration::from_secs(wait))
     }
 
     fn build(&self, args: &Args) -> Result<String, String> {
