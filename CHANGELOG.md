@@ -49,6 +49,8 @@ Making a new release? Simply add the new header with the version and date undern
 [#1345]: https://github.com/rojo-rbx/rojo/pull/1345
 [#1351]: https://github.com/rojo-rbx/rojo/pull/1351
 [#1358]: https://github.com/rojo-rbx/rojo/pull/1358
+* Fixed a bug where `$path` in an instance description couldn't reference an init script directly (i.e init.luau, init.sever.luau, etc). ([#1285])
+[#1285]: https://github.com/rojo-rbx/rojo/pull/1285
 
 ## [7.7.1] (October 1st, 2026)
 
