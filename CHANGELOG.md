@@ -42,15 +42,23 @@ Making a new release? Simply add the new header with the version and date undern
 * Fixed two-way sync failing to write or remove instances that come from a directory, such as an init script. Source changes now go to the init file inside the directory. ([#1228])
 * Fixed `rojo serve` on macOS missing file changes made while files were being deleted (for example during a `git checkout`), which left the served tree stale. ([#1345])
 * Fixed `rojo build` allocating a filesystem watcher without `--watch`, which could fail when inotify instances were exhausted. Watcher errors now preserve the underlying I/O error. ([#1337])
+* Fixed sync updates including `changedMetadata` when only Rojo's internal metadata changed. ([#1320])
+* Fixed a bug where `$path` in an instance description couldn't reference an init script directly (i.e init.luau, init.server.luau, etc). ([#1285])
+* Fixed double clicking Connect in the plugin starting two sessions. ([#1310])
+* The plugin now shows a descriptive error when the Rojo server closes while connected. ([#1287])
+* Rojo now returns a structured error response instead of panicking when `serve` API request bodies fail to read. ([#1276])
 
 [#1228]: https://github.com/rojo-rbx/rojo/pull/1228
+[#1276]: https://github.com/rojo-rbx/rojo/pull/1276
+[#1285]: https://github.com/rojo-rbx/rojo/pull/1285
+[#1287]: https://github.com/rojo-rbx/rojo/pull/1287
+[#1310]: https://github.com/rojo-rbx/rojo/pull/1310
+[#1320]: https://github.com/rojo-rbx/rojo/pull/1320
 [#1333]: https://github.com/rojo-rbx/rojo/pull/1333
 [#1337]: https://github.com/rojo-rbx/rojo/pull/1337
 [#1345]: https://github.com/rojo-rbx/rojo/pull/1345
 [#1351]: https://github.com/rojo-rbx/rojo/pull/1351
 [#1358]: https://github.com/rojo-rbx/rojo/pull/1358
-* Fixed a bug where `$path` in an instance description couldn't reference an init script directly (i.e init.luau, init.sever.luau, etc). ([#1285])
-[#1285]: https://github.com/rojo-rbx/rojo/pull/1285
 
 ## [7.7.1] (October 1st, 2026)
 
@@ -58,12 +66,10 @@ Making a new release? Simply add the new header with the version and date undern
 * Fixed `rojo serve` silently stopping syncing file changes on Windows when the served project path was a verbatim (`\\?\`) path, because tree paths and file-watcher event paths were canonicalized to different forms. ([#1290])
 * Fixed `rojo sourcemap --absolute` emitting verbatim (`\\?\`) paths on Windows, which broke require types in luau-lsp. ([#1290])
 * The plugin now disables the `Check for Updates` setting if you block access to `api.github.com`. ([#1297])
-* Fixed sync updates including `changedMetadata` when only Rojo's internal metadata changed. ([#1320])
 
 [7.7.1]: https://github.com/rojo-rbx/rojo/releases/tag/v7.7.1
 [#1290]: https://github.com/rojo-rbx/rojo/pull/1290
 [#1297]: https://github.com/rojo-rbx/rojo/pull/1297
-[#1320]: https://github.com/rojo-rbx/rojo/pull/1320
 
 ## [7.7.0] (July 1st, 2026)
 
@@ -80,7 +86,6 @@ Making a new release? Simply add the new header with the version and date undern
 * Fixed the sync fallback scrambling sibling order; replacements are now re-parented ancestors-first and in their original child order. ([#1265])
 * Instances that share a name and class are now robustly matched on resync by comparing their properties, instead of relying on child order alone. ([#1266])
 * Rojo now reports a clear error instead of panicking in several cases, including when the `serve` port is already in use, when a synced file is read-only or locked, when the filesystem watcher can't be created, and when the working directory is inaccessible. ([#1267])
-* Rojo now returns a structured error response instead of panicking when `serve` API request bodies fail to read. ([#1276])
 * Fixed `/api/serialize` returning success when a requested instance ID is missing from the serve session tree. ([#1272])
 * `rojo serve` now validates the `Host`/`Origin` headers to protect the local/private server against DNS rebinding, gates `/api/open` to local clients, and warns when bound to a network-reachable address. The accepted hosts can be extended with the `--allowed-hosts` option or a project's `serveAllowedHosts` field, for example to reach a network-exposed server by hostname. ([#1270])
 * Fixed syncback not removing stale `$properties` entries when Studio resets a property to its engine default. ([#1244])
@@ -99,7 +104,6 @@ Making a new release? Simply add the new header with the version and date undern
 [#1265]: https://github.com/rojo-rbx/rojo/pull/1265
 [#1266]: https://github.com/rojo-rbx/rojo/pull/1266
 [#1267]: https://github.com/rojo-rbx/rojo/pull/1267
-[#1276]: https://github.com/rojo-rbx/rojo/pull/1276
 [#1272]: https://github.com/rojo-rbx/rojo/pull/1272
 [#1270]: https://github.com/rojo-rbx/rojo/pull/1270
 [#1244]: https://github.com/rojo-rbx/rojo/pull/1244
