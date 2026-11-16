@@ -197,12 +197,15 @@ impl JobThreadContext {
                     if let Some(instigating_source) = &instance.metadata().instigating_source {
                         match instigating_source {
                             InstigatingSource::Path(path) => {
-                                if let Err(err) = fs::remove_file(path) {
-                                    log::error!(
-                                        "Failed to remove file {}: {}",
-                                        path.display(),
-                                        err
-                                    );
+                                // Instances synced from a directory, such as
+                                // an init script, use the directory as their path.
+                                let result = if path.is_dir() {
+                                    fs::remove_dir_all(path)
+                                } else {
+                                    fs::remove_file(path)
+                                };
+                                if let Err(err) = result {
+                                    log::error!("Failed to remove {}: {}", path.display(), err);
                                 }
                             }
                             InstigatingSource::ProjectNode { .. } => {
@@ -248,12 +251,22 @@ impl JobThreadContext {
                                 match instigating_source {
                                     InstigatingSource::Path(path) => {
                                         if let Some(Variant::String(value)) = changed_value {
-                                            if let Err(err) = fs::write(path, value) {
-                                                log::error!(
-                                                    "Failed to write file {}: {}",
-                                                    path.display(),
-                                                    err
-                                                );
+                                            match resolve_init_path(path) {
+                                                Some(resolved) => {
+                                                    if let Err(err) = fs::write(&resolved, value) {
+                                                        log::error!(
+                                                            "Failed to write file {}: {}",
+                                                            resolved.display(),
+                                                            err
+                                                        );
+                                                    }
+                                                }
+                                                None => {
+                                                    log::warn!(
+                                                        "Could not resolve init file for directory {}, skipping write",
+                                                        path.display()
+                                                    );
+                                                }
                                             }
                                         } else {
                                             log::warn!("Cannot change Source to non-string value.");
@@ -349,6 +362,33 @@ fn canonicalize_existing_ancestor(vfs: &Vfs, path: &Path) -> io::Result<PathBuf>
             Err(err) => return Err(err),
         }
     }
+}
+
+// If the path is a directory, try to find the init file inside it.
+// Returns None if it's a directory but no init file exists.
+fn resolve_init_path(path: &Path) -> Option<PathBuf> {
+    if !path.is_dir() {
+        return Some(path.to_path_buf());
+    }
+
+    const INIT_FILENAMES: &[&str] = &[
+        "init.luau",
+        "init.lua",
+        "init.server.luau",
+        "init.server.lua",
+        "init.client.luau",
+        "init.client.lua",
+        "init.csv",
+    ];
+
+    for filename in INIT_FILENAMES {
+        let candidate = path.join(filename);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 fn compute_and_apply_changes(tree: &mut RojoTree, vfs: &Vfs, id: Ref) -> Option<AppliedPatchSet> {
