@@ -41,9 +41,11 @@ Making a new release? Simply add the new header with the version and date undern
 * `Color3uint8` properties can now be specified as an array of three integers from 0 to 255. ([#1358])
 * Fixed two-way sync failing to write or remove instances that come from a directory, such as an init script. Source changes now go to the init file inside the directory. ([#1228])
 * Fixed `rojo serve` on macOS missing file changes made while files were being deleted (for example during a `git checkout`), which left the served tree stale. ([#1345])
+* Fixed `rojo build` allocating a filesystem watcher without `--watch`, which could fail when inotify instances were exhausted. Watcher errors now preserve the underlying I/O error. ([#1337])
 
 [#1228]: https://github.com/rojo-rbx/rojo/pull/1228
 [#1333]: https://github.com/rojo-rbx/rojo/pull/1333
+[#1337]: https://github.com/rojo-rbx/rojo/pull/1337
 [#1345]: https://github.com/rojo-rbx/rojo/pull/1345
 [#1351]: https://github.com/rojo-rbx/rojo/pull/1351
 [#1358]: https://github.com/rojo-rbx/rojo/pull/1358
