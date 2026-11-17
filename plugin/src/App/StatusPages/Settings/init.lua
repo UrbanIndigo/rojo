@@ -103,6 +103,14 @@ function SettingsPage:render()
 				layoutOrder = layoutIncrement(),
 			}),
 
+			AutoConnect = e(Setting, {
+				id = "autoConnect",
+				name = "Auto Connect",
+				description = "Connect on its own to a server started with 'rojo serve --autoconnect' that serves this place, finding its port. Turn it off for one place on the Connect page",
+				transparency = self.props.transparency,
+				layoutOrder = layoutIncrement(),
+			}),
+
 			ShowNotifications = e(Setting, {
 				id = "showNotifications",
 				name = "Show Notifications",

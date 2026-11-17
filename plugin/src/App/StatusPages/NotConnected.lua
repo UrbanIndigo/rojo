@@ -10,6 +10,7 @@ local Theme = require(Plugin.App.Theme)
 local BorderedContainer = require(Plugin.App.Components.BorderedContainer)
 local TextButton = require(Plugin.App.Components.TextButton)
 local Header = require(Plugin.App.Components.Header)
+local Checkbox = require(Plugin.App.Components.Checkbox)
 local Tooltip = require(Plugin.App.Components.Tooltip)
 
 local PORT_WIDTH = 74
@@ -88,6 +89,47 @@ local function AddressEntry(props)
 	end)
 end
 
+-- A checkbox for auto-connect in this place, and what the last look for a
+-- server found.
+local function AutoConnectRow(props)
+	return Theme.with(function(theme)
+		local text = if not props.enabled
+			then "Auto-connect off for this place"
+			else props.status or "Auto-connect: waiting for rojo serve"
+
+		return e("Frame", {
+			Size = UDim2.new(1, 0, 0, 28),
+			LayoutOrder = props.layoutOrder,
+			BackgroundTransparency = 1,
+		}, {
+			Checkbox = e(Checkbox, {
+				active = props.enabled,
+				transparency = props.transparency,
+				onClick = props.onToggle,
+			}),
+
+			Label = e("TextLabel", {
+				Text = text,
+				FontFace = theme.Font.Main,
+				TextSize = theme.TextSize.Small,
+				TextColor3 = theme.SubTextColor,
+				TextTransparency = props.transparency,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+
+				Size = UDim2.new(1, -36, 1, 0),
+				Position = UDim2.new(0, 36, 0, 0),
+				BackgroundTransparency = 1,
+			}, {
+				Tip = e(Tooltip.Trigger, {
+					text = "Connect without pressing Connect when 'rojo serve --autoconnect' serves this place. "
+						.. "The port is found for you.",
+				}),
+			}),
+		})
+	end)
+end
+
 local NotConnectedPage = Roact.Component:extend("NotConnectedPage")
 
 function NotConnectedPage:render()
@@ -106,9 +148,17 @@ function NotConnectedPage:render()
 			layoutOrder = 2,
 		}),
 
+		AutoConnect = e(AutoConnectRow, {
+			enabled = self.props.autoConnectHere,
+			status = self.props.autoConnectStatus,
+			onToggle = self.props.onToggleAutoConnectHere,
+			transparency = self.props.transparency,
+			layoutOrder = 3,
+		}),
+
 		Buttons = e("Frame", {
 			Size = UDim2.new(1, 0, 0, 34),
-			LayoutOrder = 3,
+			LayoutOrder = 4,
 			BackgroundTransparency = 1,
 			ZIndex = 2,
 		}, {

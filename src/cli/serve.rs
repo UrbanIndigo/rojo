@@ -42,6 +42,13 @@ pub struct ServeCommand {
     #[clap(long, value_delimiter = ',')]
     pub allowed_hosts: Vec<String>,
 
+    /// Let the Rojo plugin connect to this server on its own, without pressing
+    /// Connect, when Studio has a place open that this project serves. The
+    /// plugin finds the server's port by itself. Setting the environment
+    /// variable `ROJO_AUTOCONNECT` to `1` or `true` does the same.
+    #[clap(long)]
+    pub autoconnect: bool,
+
     /// Stop serving once standard input is closed. `rojo mcp` uses this so the
     /// servers it starts never outlive it, even if it is killed.
     #[clap(long, hide = true)]
@@ -64,7 +71,12 @@ impl ServeCommand {
 
         let vfs = Vfs::new_default()?;
 
-        let session = Arc::new(ServeSession::new(vfs, project_path)?);
+        let mut session = ServeSession::new(vfs, project_path)?;
+        // The environment variable exists so tools that run `rojo serve` for
+        // you, such as rbxts-build, can turn this on without new arguments.
+        let auto_connect = self.autoconnect || env_flag("ROJO_AUTOCONNECT");
+        session.set_auto_connect(auto_connect);
+        let session = Arc::new(session);
 
         let ip = self
             .address
@@ -87,14 +99,30 @@ impl ServeCommand {
         let server = LiveServer::new(session);
 
         server.start((ip, port).into(), allowed_hosts, || {
-            let _ = show_start_message(ip, port, global.color.into());
+            let _ = show_start_message(ip, port, auto_connect, global.color.into());
         })?;
 
         Ok(())
     }
 }
 
-fn show_start_message(bind_address: IpAddr, port: u16, color: ColorChoice) -> io::Result<()> {
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn show_start_message(
+    bind_address: IpAddr,
+    port: u16,
+    auto_connect: bool,
+    color: ColorChoice,
+) -> io::Result<()> {
     let mut green = ColorSpec::new();
     green.set_fg(Some(Color::Green)).set_bold(true);
 
@@ -117,6 +145,13 @@ fn show_start_message(bind_address: IpAddr, port: u16, color: ColorChoice) -> io
     write!(&mut buffer, "  Port:    ")?;
     buffer.set_color(&green)?;
     writeln!(&mut buffer, "{}", port)?;
+
+    if auto_connect {
+        buffer.set_color(&ColorSpec::new())?;
+        write!(&mut buffer, "  Auto-connect: ")?;
+        buffer.set_color(&green)?;
+        writeln!(&mut buffer, "on")?;
+    }
 
     writeln!(&mut buffer)?;
 

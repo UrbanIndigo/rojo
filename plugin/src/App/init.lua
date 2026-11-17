@@ -19,6 +19,7 @@ local strict = require(Plugin.strict)
 local Dictionary = require(Plugin.Dictionary)
 local ServeSession = require(Plugin.ServeSession)
 local ApiContext = require(Plugin.ApiContext)
+local AutoConnect = require(Plugin.AutoConnect)
 local PatchSet = require(Plugin.PatchSet)
 local PatchTree = require(Plugin.PatchTree)
 local preloadAssets = require(Plugin.preloadAssets)
@@ -59,6 +60,11 @@ local AGENT_CONNECT_POLL_INTERVAL = 2
 -- `AGENT_SCAN_PORTS` in src/mcp/serve.rs.
 local AGENT_SCAN_PORTS = 10
 
+-- Seconds between looks for a Rojo server for this place while not
+-- connected. Each look asks `AutoConnect.SCAN_PORTS` localhost ports, so this
+-- is kept well under Studio's HTTP request budget.
+local AUTO_CONNECT_POLL_INTERVAL = 8
+
 -- Agents can address a Studio window by place name. Studio names a place
 -- opened from a file after the file, and a sync may rename the data model
 -- later, so the name it had when the plugin loaded counts too.
@@ -90,6 +96,13 @@ function App:init()
 	local priorSyncInfo = self:getPriorSyncInfo()
 	self.host, self.setHost = Roact.createBinding(priorSyncInfo.host or "")
 	self.port, self.setPort = Roact.createBinding(priorSyncInfo.port or "")
+	-- The port auto-connect last put on the Connect page. A port the user
+	-- typed is left alone, but a filled or remembered one follows the server.
+	self.autoFilledPort = priorSyncInfo.port or ""
+	-- Server session IDs that were connected to or auto-connected once. Each
+	-- server is auto-connected at most once, so disconnecting stays
+	-- disconnected until `rojo serve` restarts.
+	self.autoConnectSeen = {}
 
 	self.confirmationBindable = Instance.new("BindableEvent")
 	self.confirmationEvent = self.confirmationBindable.Event
@@ -170,7 +183,16 @@ function App:init()
 		},
 		notifications = {},
 		toolbarIcon = Assets.Images.PluginButton,
+		autoConnectHere = self:isAutoConnectOnHere(),
+		autoConnectStatus = nil,
 	})
+
+	self.disconnectAutoConnectChanged = Settings:onChanged("autoConnect", function()
+		self:setState({ autoConnectHere = self:isAutoConnectOnHere() })
+	end)
+	self.disconnectAutoConnectPlacesChanged = Settings:onChanged("autoConnectDisabledPlaces", function()
+		self:setState({ autoConnectHere = self:isAutoConnectOnHere() })
+	end)
 
 	if RunService:IsEdit() then
 		self:checkForUpdates()
@@ -198,6 +220,8 @@ function App:init()
 				self:checkSyncReminder()
 			end
 		end)
+
+		self:startAutoConnectPolling()
 	end
 
 	if self:isAutoConnectPlaytestServerAvailable() then
@@ -235,6 +259,10 @@ function App:willUnmount()
 		self.disconnectAgentConnectionsChanged()
 	end
 	self:stopAgentConnectPolling()
+
+	self.disconnectAutoConnectChanged()
+	self.disconnectAutoConnectPlacesChanged()
+	self:stopAutoConnectPolling()
 
 	self.autoConnectPlaytestServerListener()
 	self:clearRunningConnectionInfo()
@@ -732,6 +760,168 @@ function App:checkAgentConnectRequest()
 		end)
 end
 
+function App:getAutoConnectPlaceKey(): string
+	return AutoConnect.placeKey(game.PlaceId, openedPlaceName)
+end
+
+-- The project last synced to this place. Unlike `priorEndpoints`, this is
+-- kept for local files too, keyed by file name, so they need confirming once.
+function App:getAutoConnectProject(): string?
+	local projects = Settings:get("autoConnectProjects") or {}
+	return projects[self:getAutoConnectPlaceKey()]
+end
+
+function App:setAutoConnectProject(projectName: string)
+	if self:getAutoConnectProject() == projectName then
+		return
+	end
+	local projects = table.clone(Settings:get("autoConnectProjects") or {})
+	projects[self:getAutoConnectPlaceKey()] = projectName
+	Settings:set("autoConnectProjects", projects)
+end
+
+function App:isAutoConnectOnHere(): boolean
+	local disabled = Settings:get("autoConnectDisabledPlaces") or {}
+	return Settings:get("autoConnect") and not disabled[self:getAutoConnectPlaceKey()]
+end
+
+function App:setAutoConnectHere(enabled: boolean)
+	if enabled and not Settings:get("autoConnect") then
+		-- Turning it on for one place should not need a trip to Settings
+		Settings:set("autoConnect", true)
+	end
+
+	local disabled = table.clone(Settings:get("autoConnectDisabledPlaces") or {})
+	disabled[self:getAutoConnectPlaceKey()] = if enabled then nil else true
+	Settings:set("autoConnectDisabledPlaces", disabled)
+
+	if enabled then
+		-- Let a server that was skipped while it was off connect now
+		table.clear(self.autoConnectSeen)
+		self:checkAutoConnect()
+	end
+end
+
+function App:startAutoConnectPolling()
+	if self.autoConnectPollingThread ~= nil then
+		return
+	end
+
+	Log.trace("Starting auto-connect polling thread")
+	self.autoConnectPollingThread = task.spawn(function()
+		-- Look right away, so a server that is already running connects as
+		-- the place opens
+		repeat
+			if self.autoConnectPollingThread == nil then
+				return
+			end
+			if self.serveSession == nil and not self.checkingAutoConnect then
+				self:checkAutoConnect()
+			end
+		until not task.wait(AUTO_CONNECT_POLL_INTERVAL)
+	end)
+end
+
+function App:stopAutoConnectPolling()
+	if self.autoConnectPollingThread then
+		Log.trace("Stopping auto-connect polling thread")
+		task.cancel(self.autoConnectPollingThread)
+		self.autoConnectPollingThread = nil
+	end
+end
+
+-- Looks for a server for this place. It fills in the Connect page's port
+-- with the one the server is on, and connects when the server was started
+-- with `rojo serve --autoconnect`.
+function App:checkAutoConnect()
+	if self.serveSession ~= nil or self.checkingAutoConnect then
+		return
+	end
+	self.checkingAutoConnect = true
+
+	local host, port = self:getHostAndPort()
+	local priorSyncInfo = self:getPriorSyncInfo()
+
+	-- Only this machine is scanned. A remote host gets just its own port.
+	local ports = { port }
+	if host == Config.defaultHost or host == "127.0.0.1" then
+		ports = AutoConnect.ports()
+		for _, extra in { port, priorSyncInfo.port } do
+			if extra ~= nil and not table.find(ports, extra) then
+				table.insert(ports, extra)
+			end
+		end
+	end
+
+	AutoConnect.scan(host, ports)
+		:andThen(function(found)
+			local place = {
+				placeId = game.PlaceId,
+				placeName = openedPlaceName,
+				priorProjectName = self:getAutoConnectProject() or priorSyncInfo.projectName,
+			}
+			local candidates = {}
+			for foundPort, serverInfo in found do
+				local match = AutoConnect.match(serverInfo, place)
+				if match ~= nil then
+					table.insert(candidates, { serverInfo = serverInfo, port = foundPort, match = match })
+				end
+			end
+
+			local best, unique = AutoConnect.pick(candidates, port)
+			if best == nil or not unique then
+				self:setState({
+					autoConnectStatus = if best ~= nil then "Several servers found; pick a port" else Roact.None,
+				})
+				return
+			end
+
+			local serverInfo = best.serverInfo
+			local currentPort = self.port:getValue()
+			if currentPort == "" or currentPort == self.autoFilledPort then
+				local fillPort = if best.port == Config.defaultPort then "" else best.port
+				if currentPort ~= fillPort then
+					Log.trace("Filling in port {} for project '{}'", best.port, serverInfo.projectName)
+					self.setPort(fillPort)
+				end
+				self.autoFilledPort = fillPort
+			end
+
+			local canAutoConnect = serverInfo.autoConnect == true
+			self:setState({
+				autoConnectStatus = if canAutoConnect
+					then string.format("Found '%s' on %s", serverInfo.projectName, best.port)
+					else string.format("Found '%s' on %s (no --autoconnect)", serverInfo.projectName, best.port),
+			})
+
+			if
+				not canAutoConnect
+				or not self:isAutoConnectOnHere()
+				or self.autoConnectSeen[serverInfo.sessionId]
+				or self.serveSession ~= nil
+				or not self:isSyncLockAvailable()
+			then
+				return
+			end
+			self.autoConnectSeen[serverInfo.sessionId] = true
+
+			Log.info("Auto-connecting to project '{}' on {}:{}", serverInfo.projectName, host, best.port)
+			self.setPort(best.port)
+			self.autoFilledPort = best.port
+			self.pendingAutoConnect = {
+				match = best.match,
+				projectName = serverInfo.projectName,
+			}
+			self:startSession()
+		end)
+		:catch(function(err)
+			Log.trace("Auto-connect check failed: {}", err)
+		end)
+		:finally(function()
+			self.checkingAutoConnect = false
+		end)
+end
+
 function App:isAutoConnectPlaytestServerAvailable()
 	return RunService:IsRunning()
 		and RunService:IsStudio()
@@ -873,19 +1063,50 @@ function App:startSession()
 			self.knownProjects[details] = true
 			self:setPriorSyncInfo(host, port, details)
 			self:setRunningConnectionInfo(baseUrl)
+			if apiContext.__sessionId ~= nil then
+				self.autoConnectSeen[apiContext.__sessionId] = true
+			end
+			if not ignorePlaceIds[tostring(game.PlaceId)] or game.PlaceId == 0 then
+				self:setAutoConnectProject(details)
+			end
 
 			local address = ("%s:%s"):format(host, port)
+			local autoConnected = self.pendingAutoConnect ~= nil
 			self:setState({
 				appStatus = AppStatus.Connected,
 				projectName = details,
-				address = address,
+				address = if autoConnected then address .. "  ·  auto-connected" else address,
 				toolbarIcon = Assets.Images.PluginButtonConnected,
 			})
-			self:addNotification({
-				text = string.format("Connected to session '%s' at %s.", details, address),
-			})
+			if autoConnected then
+				self:addNotification({
+					text = string.format("Auto-connected to '%s' at %s.", details, address),
+					timeout = 8,
+					actions = {
+						TurnOff = {
+							text = "Turn off here",
+							style = "Bordered",
+							layoutOrder = 1,
+							onClick = function()
+								self:setAutoConnectHere(false)
+								self:endSession()
+							end,
+						},
+						Dismiss = {
+							text = "OK",
+							style = "Solid",
+							layoutOrder = 2,
+						},
+					},
+				})
+			else
+				self:addNotification({
+					text = string.format("Connected to session '%s' at %s.", details, address),
+				})
+			end
 		elseif status == ServeSession.Status.Disconnected then
 			self.serveSession = nil
+			self.pendingAutoConnect = nil
 			self:releaseSyncLock()
 			self:clearRunningConnectionInfo()
 			self:setState({
@@ -936,6 +1157,20 @@ function App:startSession()
 		end
 
 		local confirmationBehavior = Settings:get("confirmationBehavior")
+		local autoConnect = self.pendingAutoConnect
+		if autoConnect ~= nil then
+			if autoConnect.match == AutoConnect.Match.Unknown then
+				-- Nothing ties this server to the place yet, so the first
+				-- sync is always confirmed. Once accepted, the place
+				-- remembers the project and later auto-connects skip this.
+				Log.trace("Confirming auto-connect because the server is not known to belong to this place")
+				confirmationBehavior = "Always"
+			elseif confirmationBehavior == "Initial" then
+				Log.trace("Accepting patch without confirmation because auto-connect matched this place")
+				return "Accept"
+			end
+		end
+
 		if confirmationBehavior == "Initial" then
 			-- Only confirm if we haven't synced this project yet this session
 			if self.knownProjects[serverInfo.projectName] then
@@ -1021,6 +1256,7 @@ function App:endSession()
 
 	self.serveSession:stop()
 	self.serveSession = nil
+	self.pendingAutoConnect = nil
 	self:setState({
 		appStatus = AppStatus.NotConnected,
 	})
@@ -1089,6 +1325,12 @@ function App:render()
 
 						onConnect = function()
 							self:startSession()
+						end,
+
+						autoConnectHere = self.state.autoConnectHere,
+						autoConnectStatus = self.state.autoConnectStatus,
+						onToggleAutoConnectHere = function()
+							self:setAutoConnectHere(not self:isAutoConnectOnHere())
 						end,
 
 						onNavigateSettings = function()

@@ -90,6 +90,10 @@ pub struct ServeSession {
     /// Connection requests from agents and the clients currently connected,
     /// which `rojo mcp` reports back to the agent.
     agent: AgentState,
+
+    /// Whether `rojo serve --autoconnect` was used. The plugin connects to such
+    /// a server on its own, without the user pressing Connect.
+    auto_connect: bool,
 }
 
 impl ServeSession {
@@ -151,7 +155,18 @@ impl ServeSession {
             tree_mutation_sender,
             vfs,
             agent: AgentState::new(),
+            auto_connect: false,
         })
+    }
+
+    /// Lets the plugin connect to this session without the user pressing
+    /// Connect. Set before the session is shared with the web server.
+    pub fn set_auto_connect(&mut self, auto_connect: bool) {
+        self.auto_connect = auto_connect;
+    }
+
+    pub fn auto_connect(&self) -> bool {
+        self.auto_connect
     }
 
     pub fn tree_handle(&self) -> Arc<Mutex<RojoTree>> {

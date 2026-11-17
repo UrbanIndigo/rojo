@@ -173,6 +173,11 @@ pub struct ServerInfoResponse {
     pub game_id: Option<u64>,
     pub place_id: Option<u64>,
     pub root_instance_id: Ref,
+    /// Set by `rojo serve --autoconnect`. Plugins that understand it connect
+    /// on their own when this server serves the place they have open.
+    /// Older plugins ignore unknown fields.
+    #[serde(default)]
+    pub auto_connect: bool,
 }
 
 /// Response body from /api/agent/status

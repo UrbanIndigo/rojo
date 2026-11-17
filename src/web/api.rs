@@ -105,6 +105,7 @@ impl ApiService {
             place_id: self.serve_session.place_id(),
             game_id: self.serve_session.game_id(),
             root_instance_id,
+            auto_connect: self.serve_session.auto_connect(),
         })
     }
 
