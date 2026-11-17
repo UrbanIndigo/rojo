@@ -7,6 +7,7 @@ use std::{
 use anyhow::{anyhow, bail, Context};
 use clap::{CommandFactory, Parser};
 use memofs::Vfs;
+use rbx_dom_weak::types::{Attributes, Variant};
 use roblox_install::RobloxStudio;
 use tokio::runtime::Runtime;
 
@@ -165,6 +166,10 @@ fn write_model(
 ) -> anyhow::Result<()> {
     println!("Building project '{}'", session.project_name());
 
+    if matches!(output_kind, OutputKind::Rbxl | OutputKind::Rbxlx) {
+        stamp_serve_info(session);
+    }
+
     let tree = session.tree();
     let root_id = tree.get_root_id();
 
@@ -206,6 +211,60 @@ fn write_model(
     println!("Built project to {}", filename);
 
     Ok(())
+}
+
+/// Attribute on a built place's Workspace holding the project's `servePort`.
+/// The plugin reads it when Studio opens the place, so it knows the port
+/// `rojo serve` will use without the user typing it or a port scan.
+pub const SERVE_PORT_ATTRIBUTE: &str = "__Rojo_ServePort";
+
+/// Attribute on a built place's Workspace naming the project it was built
+/// from, so the plugin knows which served project belongs to the place.
+pub const PROJECT_NAME_ATTRIBUTE: &str = "__Rojo_ProjectName";
+
+/// Writes where the project serves into the Workspace of a place being
+/// built. Only the session's tree for this build is changed; `rojo serve`
+/// never adds these, and live sync leaves attributes it does not manage
+/// alone. A published place keeps them, which is harmless: a port number
+/// and the project's name.
+fn stamp_serve_info(session: &ServeSession) {
+    let port = session.project_port();
+    let name = session.project_name().to_owned();
+
+    let mut tree = session.tree();
+    let root_id = tree.get_root_id();
+    let workspace_id = tree.get_instance(root_id).and_then(|root| {
+        root.children().iter().copied().find(|&id| {
+            tree.get_instance(id)
+                .map(|child| child.class_name() == "Workspace")
+                .unwrap_or(false)
+        })
+    });
+    let Some(workspace_id) = workspace_id else {
+        return;
+    };
+    let Some(mut workspace) = tree.get_instance_mut(workspace_id) else {
+        return;
+    };
+
+    let properties = workspace.properties_mut();
+    let mut attributes = match properties.get(&"Attributes".into()) {
+        Some(Variant::Attributes(existing)) => existing.clone(),
+        _ => Attributes::new(),
+    };
+    attributes.insert(PROJECT_NAME_ATTRIBUTE.to_owned(), Variant::String(name));
+    match port {
+        Some(port) => {
+            attributes.insert(
+                SERVE_PORT_ATTRIBUTE.to_owned(),
+                Variant::Float64(port.into()),
+            );
+        }
+        None => {
+            attributes.remove(SERVE_PORT_ATTRIBUTE);
+        }
+    }
+    properties.insert("Attributes".into(), attributes.into());
 }
 
 /// Replaces `destination` with the bytes produced by `write`, leaving the

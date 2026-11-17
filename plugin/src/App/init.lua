@@ -70,6 +70,16 @@ local AUTO_CONNECT_POLL_INTERVAL = 8
 -- later, so the name it had when the plugin loaded counts too.
 local openedPlaceName = game.Name
 
+-- `rojo build` writes the project's name and `servePort` into a built place's
+-- Workspace, so the plugin knows where its server will be without a scan.
+-- They are read once as the place opens.
+local builtProjectName = workspace:GetAttribute("__Rojo_ProjectName")
+local builtServePort = workspace:GetAttribute("__Rojo_ServePort")
+if type(builtProjectName) ~= "string" then
+	builtProjectName = nil
+end
+builtServePort = if type(builtServePort) == "number" then tostring(builtServePort) else nil
+
 local function baseUrlOf(host: string, port: string): string
 	return if string.find(host, "^https?://")
 		then string.format("%s:%s", host, port)
@@ -95,10 +105,16 @@ function App:init()
 
 	local priorSyncInfo = self:getPriorSyncInfo()
 	self.host, self.setHost = Roact.createBinding(priorSyncInfo.host or "")
-	self.port, self.setPort = Roact.createBinding(priorSyncInfo.port or "")
+	-- A place built by Rojo says which port its project serves on, which is
+	-- newer than any port remembered for the place
+	local initialPort = priorSyncInfo.port or ""
+	if builtServePort ~= nil then
+		initialPort = if builtServePort == Config.defaultPort then "" else builtServePort
+	end
+	self.port, self.setPort = Roact.createBinding(initialPort)
 	-- The port auto-connect last put on the Connect page. A port the user
 	-- typed is left alone, but a filled or remembered one follows the server.
-	self.autoFilledPort = priorSyncInfo.port or ""
+	self.autoFilledPort = initialPort
 	-- Server session IDs that were connected to or auto-connected once. Each
 	-- server is auto-connected at most once, so disconnecting stays
 	-- disconnected until `rojo serve` restarts.
@@ -842,32 +858,52 @@ function App:checkAutoConnect()
 	local host, port = self:getHostAndPort()
 	local priorSyncInfo = self:getPriorSyncInfo()
 
-	-- Only this machine is scanned. A remote host gets just its own port.
-	local ports = { port }
+	local place = {
+		placeId = game.PlaceId,
+		placeName = openedPlaceName,
+		builtProjectName = builtProjectName,
+		priorProjectName = self:getAutoConnectProject() or priorSyncInfo.projectName,
+	}
+
+	local function candidatesOf(found)
+		local candidates = {}
+		for foundPort, serverInfo in found do
+			local match = AutoConnect.match(serverInfo, place)
+			if match ~= nil then
+				table.insert(candidates, { serverInfo = serverInfo, port = foundPort, match = match })
+			end
+		end
+		return candidates
+	end
+
+	-- The ports the place points at are asked first: the Connect page's, the
+	-- one the built place names and the one last used here. Only when none
+	-- of them has a server for this place is the rest of the range scanned,
+	-- and only on this machine; a remote host gets just its own port.
+	local likelyPorts = {}
+	for _, likely in { port, builtServePort, priorSyncInfo.port } do
+		if likely ~= nil and likely ~= "" and not table.find(likelyPorts, likely) then
+			table.insert(likelyPorts, likely)
+		end
+	end
+	local otherPorts = {}
 	if host == Config.defaultHost or host == "127.0.0.1" then
-		ports = AutoConnect.ports()
-		for _, extra in { port, priorSyncInfo.port } do
-			if extra ~= nil and not table.find(ports, extra) then
-				table.insert(ports, extra)
+		for _, scanned in AutoConnect.ports() do
+			if not table.find(likelyPorts, scanned) then
+				table.insert(otherPorts, scanned)
 			end
 		end
 	end
 
-	AutoConnect.scan(host, ports)
+	AutoConnect.scan(host, likelyPorts)
 		:andThen(function(found)
-			local place = {
-				placeId = game.PlaceId,
-				placeName = openedPlaceName,
-				priorProjectName = self:getAutoConnectProject() or priorSyncInfo.projectName,
-			}
-			local candidates = {}
-			for foundPort, serverInfo in found do
-				local match = AutoConnect.match(serverInfo, place)
-				if match ~= nil then
-					table.insert(candidates, { serverInfo = serverInfo, port = foundPort, match = match })
-				end
+			local candidates = candidatesOf(found)
+			if #candidates > 0 or #otherPorts == 0 then
+				return candidates
 			end
-
+			return AutoConnect.scan(host, otherPorts):andThen(candidatesOf)
+		end)
+		:andThen(function(candidates)
 			local best, unique = AutoConnect.pick(candidates, port)
 			if best == nil or not unique then
 				self:setState({

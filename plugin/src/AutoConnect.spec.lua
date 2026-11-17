@@ -27,6 +27,12 @@ return function()
 			expect(AutoConnect.match(info({ unexpectedPlaceIds = { 5 } }), { placeId = 5 })).to.equal(nil)
 		end)
 
+		it("should match the project a built place came from", function()
+			expect(AutoConnect.match(info(), { placeId = 0, placeName = "game.rbxl", builtProjectName = "farm" })).to.equal(
+				Match.Place
+			)
+		end)
+
 		it("should match the project last synced to the place", function()
 			expect(AutoConnect.match(info(), { placeId = 5, priorProjectName = "farm" })).to.equal(Match.Known)
 		end)

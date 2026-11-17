@@ -24,7 +24,8 @@ AutoConnect.SCAN_PORTS = 28
 
 -- How well a server fits the open place. Higher is better.
 AutoConnect.Match = {
-	-- The project lists this place in `servePlaceIds` or as its `placeId`.
+	-- The project lists this place in `servePlaceIds` or as its `placeId`,
+	-- or `rojo build` built the place from it.
 	Place = 3,
 	-- This place was last synced with this project, or is a local file
 	-- named after it.
@@ -37,7 +38,7 @@ local function contains(list, value): boolean
 	return type(list) == "table" and table.find(list, value) ~= nil
 end
 
--- place: { placeId: number, placeName: string?, priorProjectName: string? }
+-- place: { placeId: number, placeName: string?, builtProjectName: string?, priorProjectName: string? }
 -- Returns a `Match` value, or nil when the server must not be used here.
 function AutoConnect.match(serverInfo, place): number?
 	if serverInfo.protocolVersion ~= Config.protocolVersion then
@@ -56,6 +57,10 @@ function AutoConnect.match(serverInfo, place): number?
 		place.placeId ~= 0
 		and (serverInfo.placeId == place.placeId or contains(serverInfo.expectedPlaceIds, place.placeId))
 	then
+		return AutoConnect.Match.Place
+	end
+
+	if place.builtProjectName == serverInfo.projectName then
 		return AutoConnect.Match.Place
 	end
 
