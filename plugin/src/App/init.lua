@@ -540,6 +540,11 @@ function App:checkSyncReminder()
 
 	self:findActiveServer()
 		:andThen(function(serverInfo, host, port)
+			if self.serveSession ~= nil or self:willAutoConnectTo(serverInfo) then
+				-- Auto-connect handles this server, and the reminder would
+				-- otherwise show up after the session has connected
+				return
+			end
 			self:sendSyncReminder(
 				`Project '{serverInfo.projectName}' is serving at {host}:{port}.\nWould you like to connect?`,
 				{ "Connect", "Dismiss" }
@@ -596,7 +601,7 @@ end
 
 function App:sendSyncReminder(message: string, shownActions: { string })
 	local syncReminderMode = Settings:get("syncReminderMode")
-	if syncReminderMode == "None" then
+	if syncReminderMode == "None" or self.serveSession ~= nil then
 		return
 	end
 
@@ -794,6 +799,21 @@ function App:setAutoConnectProject(projectName: string)
 	local projects = table.clone(Settings:get("autoConnectProjects") or {})
 	projects[self:getAutoConnectPlaceKey()] = projectName
 	Settings:set("autoConnectProjects", projects)
+end
+
+-- Whether auto-connect will connect to this server by itself, so asking the
+-- user to connect would only get in its way.
+function App:willAutoConnectTo(serverInfo): boolean
+	return serverInfo.autoConnect == true
+		and self:isAutoConnectOnHere()
+		and not self.autoConnectSeen[serverInfo.sessionId]
+		and AutoConnect.match(serverInfo, {
+				placeId = game.PlaceId,
+				placeName = openedPlaceName,
+				builtProjectName = builtProjectName,
+				priorProjectName = self:getAutoConnectProject() or self:getPriorSyncInfo().projectName,
+			})
+			~= nil
 end
 
 function App:isAutoConnectOnHere(): boolean
@@ -1092,9 +1112,12 @@ function App:startSession()
 				appStatus = AppStatus.Connecting,
 				toolbarIcon = Assets.Images.PluginButton,
 			})
-			self:addNotification({
-				text = "Connecting to session...",
-			})
+			if self.pendingAutoConnect == nil then
+				-- Auto-connect says so once it has connected instead
+				self:addNotification({
+					text = "Connecting to session...",
+				})
+			end
 		elseif status == ServeSession.Status.Connected then
 			self.knownProjects[details] = true
 			self:setPriorSyncInfo(host, port, details)
@@ -1104,6 +1127,11 @@ function App:startSession()
 			end
 			if not ignorePlaceIds[tostring(game.PlaceId)] or game.PlaceId == 0 then
 				self:setAutoConnectProject(details)
+			end
+
+			if self.dismissSyncReminder then
+				self.dismissSyncReminder()
+				self.dismissSyncReminder = nil
 			end
 
 			local address = ("%s:%s"):format(host, port)
@@ -1116,8 +1144,8 @@ function App:startSession()
 			})
 			if autoConnected then
 				self:addNotification({
-					text = string.format("Auto-connected to '%s' at %s.", details, address),
-					timeout = 8,
+					text = string.format("Auto-connected to '%s' on %s.", details, port),
+					timeout = 4,
 					actions = {
 						TurnOff = {
 							text = "Turn off here",
@@ -1127,11 +1155,6 @@ function App:startSession()
 								self:setAutoConnectHere(false)
 								self:endSession()
 							end,
-						},
-						Dismiss = {
-							text = "OK",
-							style = "Solid",
-							layoutOrder = 2,
 						},
 					},
 				})
