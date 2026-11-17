@@ -115,6 +115,12 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub serve_allowed_hosts: Vec<String>,
 
+    /// Lets the Rojo plugin connect to `rojo serve` on its own, without
+    /// pressing Connect, like `rojo serve --autoconnect`. Rojo releases
+    /// without auto-connect reject projects that set this.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub serve_auto_connect: bool,
+
     /// Determines if Rojo should emit scripts with the appropriate `RunContext`
     /// for `*.client.lua` and `*.server.lua` files in the project instead of
     /// using `Script` and `LocalScript` Instances.
@@ -602,6 +608,24 @@ mod test {
         assert_eq!(project.sync_rules.len(), 2);
         assert!(project.sync_rules[0].include.is_match("data.data.json"));
         assert!(project.sync_rules[1].include.is_match("init.module.lua"));
+    }
+
+    #[test]
+    fn project_with_serve_auto_connect() {
+        let load = |json: &str| {
+            Project::load_from_slice(
+                json.as_bytes(),
+                PathBuf::from("/test/default.project.json"),
+                None,
+            )
+            .expect("Failed to parse project")
+        };
+
+        let on = load(r#"{ "name": "P", "tree": { "$path": "src" }, "serveAutoConnect": true }"#);
+        assert!(on.serve_auto_connect);
+
+        let off = load(r#"{ "name": "P", "tree": { "$path": "src" } }"#);
+        assert!(!off.serve_auto_connect);
     }
 
     #[test]

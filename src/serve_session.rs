@@ -229,6 +229,10 @@ impl ServeSession {
         self.root_project.serve_address
     }
 
+    pub fn project_auto_connect(&self) -> bool {
+        self.root_project.serve_auto_connect
+    }
+
     pub fn serve_allowed_hosts(&self) -> &[String] {
         &self.root_project.serve_allowed_hosts
     }

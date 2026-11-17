@@ -808,17 +808,17 @@ function App:startAutoConnectPolling()
 	end
 
 	Log.trace("Starting auto-connect polling thread")
+	-- task.spawn runs the function before its thread is assigned, so the loop
+	-- must not check `autoConnectPollingThread`; stopping cancels the thread.
 	self.autoConnectPollingThread = task.spawn(function()
-		-- Look right away, so a server that is already running connects as
-		-- the place opens
-		repeat
-			if self.autoConnectPollingThread == nil then
-				return
-			end
+		while true do
+			-- Look right away, so a server that is already running connects
+			-- as the place opens
 			if self.serveSession == nil and not self.checkingAutoConnect then
 				self:checkAutoConnect()
 			end
-		until not task.wait(AUTO_CONNECT_POLL_INTERVAL)
+			task.wait(AUTO_CONNECT_POLL_INTERVAL)
+		end
 	end)
 end
 

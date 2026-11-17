@@ -45,7 +45,8 @@ pub struct ServeCommand {
     /// Let the Rojo plugin connect to this server on its own, without pressing
     /// Connect, when Studio has a place open that this project serves. The
     /// plugin finds the server's port by itself. Setting the environment
-    /// variable `ROJO_AUTOCONNECT` to `1` or `true` does the same.
+    /// variable `ROJO_AUTOCONNECT` to `1` or `true`, or `"serveAutoConnect": true`
+    /// in the project file, does the same.
     #[clap(long)]
     pub autoconnect: bool,
 
@@ -74,7 +75,8 @@ impl ServeCommand {
         let mut session = ServeSession::new(vfs, project_path)?;
         // The environment variable exists so tools that run `rojo serve` for
         // you, such as rbxts-build, can turn this on without new arguments.
-        let auto_connect = self.autoconnect || env_flag("ROJO_AUTOCONNECT");
+        let auto_connect =
+            self.autoconnect || env_flag("ROJO_AUTOCONNECT") || session.project_auto_connect();
         session.set_auto_connect(auto_connect);
         let session = Arc::new(session);
 

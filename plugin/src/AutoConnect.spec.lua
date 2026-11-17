@@ -36,6 +36,16 @@ return function()
 			expect(AutoConnect.match(info(), { placeId = 0, placeName = "other" })).to.equal(Match.Unknown)
 		end)
 
+		it("should match a local file named after the project with its extension", function()
+			expect(AutoConnect.match(info(), { placeId = 0, placeName = "farm.rbxl" })).to.equal(Match.Known)
+		end)
+
+		it("should only confirm a local file last synced with another project", function()
+			expect(AutoConnect.match(info(), { placeId = 0, placeName = "game.rbxl", priorProjectName = "fruit" })).to.equal(
+				Match.Unknown
+			)
+		end)
+
 		it("should refuse a project other than the one last synced", function()
 			expect(AutoConnect.match(info(), { placeId = 5, priorProjectName = "fruit" })).to.equal(nil)
 		end)

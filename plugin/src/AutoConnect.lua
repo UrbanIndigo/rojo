@@ -59,16 +59,28 @@ function AutoConnect.match(serverInfo, place): number?
 		return AutoConnect.Match.Place
 	end
 
-	if place.priorProjectName ~= nil then
-		-- The place was synced with a different project before, which is a
-		-- strong sign this server is for some other place
-		return if place.priorProjectName == serverInfo.projectName then AutoConnect.Match.Known else nil
+	if place.priorProjectName == serverInfo.projectName then
+		return AutoConnect.Match.Known
 	end
 
-	-- Studio names a local file after the file, and build tools usually name
-	-- the file after the project
-	if place.placeId == 0 and place.placeName == serverInfo.projectName then
-		return AutoConnect.Match.Known
+	if place.placeId == 0 then
+		-- Studio names a local file after the file, and build tools often
+		-- name the file after the project
+		local fileName = if place.placeName then string.gsub(place.placeName, "%.rbxlx?$", "") else nil
+		if fileName == serverInfo.projectName then
+			return AutoConnect.Match.Known
+		end
+
+		-- File names like game.rbxl are shared by many projects, so a file
+		-- last synced with another project may still be this one's; its first
+		-- sync is confirmed
+		return AutoConnect.Match.Unknown
+	end
+
+	if place.priorProjectName ~= nil then
+		-- A published place synced with a different project before is
+		-- almost certainly some other project's place
+		return nil
 	end
 
 	return AutoConnect.Match.Unknown
