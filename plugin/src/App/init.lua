@@ -918,10 +918,19 @@ function App:checkAutoConnect()
 	AutoConnect.scan(host, likelyPorts)
 		:andThen(function(found)
 			local candidates = candidatesOf(found)
-			if #candidates > 0 or #otherPorts == 0 then
+			local best = AutoConnect.pick(candidates, port)
+			-- Ports picked by `rojo serve` change between runs, so a weaker
+			-- match on a remembered port may be another project's server
+			-- while this place's is elsewhere in the range
+			if (best ~= nil and best.match == AutoConnect.Match.Place) or #otherPorts == 0 then
 				return candidates
 			end
-			return AutoConnect.scan(host, otherPorts):andThen(candidatesOf)
+			return AutoConnect.scan(host, otherPorts):andThen(function(more)
+				for _, candidate in candidatesOf(more) do
+					table.insert(candidates, candidate)
+				end
+				return candidates
+			end)
 		end)
 		:andThen(function(candidates)
 			local best, unique = AutoConnect.pick(candidates, port)
