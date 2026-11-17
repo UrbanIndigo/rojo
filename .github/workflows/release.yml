@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
 
+# The jobs create the release and upload to it with GITHUB_TOKEN, which is
+# read-only by default on forks.
+permissions:
+  contents: write
+
 jobs:
   create-release:
     name: Create Release
