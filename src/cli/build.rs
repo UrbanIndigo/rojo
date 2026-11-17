@@ -13,7 +13,7 @@ use tokio::runtime::Runtime;
 
 use crate::serve_session::ServeSession;
 
-use super::resolve_path;
+use super::{resolve_path, serve_port};
 
 const UNKNOWN_OUTPUT_KIND_ERR: &str = "Could not detect what kind of file to build. \
                                        Expected output file to end in .rbxl, .rbxlx, .rbxm, or .rbxmx.";
@@ -228,7 +228,18 @@ pub const PROJECT_NAME_ATTRIBUTE: &str = "__Rojo_ProjectName";
 /// alone. A published place keeps them, which is harmless: a port number
 /// and the project's name.
 fn stamp_serve_info(session: &ServeSession) {
-    let port = session.project_port();
+    // A project without a fixed port gets the one `rojo serve` uses for it,
+    // picking and recording one if neither has run yet. The bind address is
+    // only used to test whether a port is free.
+    let port = match session.project_port() {
+        Some(port) if port != 0 => Some(port),
+        _ => serve_port::for_build(
+            &session.root_project().file_location,
+            session
+                .serve_address()
+                .unwrap_or(std::net::Ipv4Addr::LOCALHOST.into()),
+        ),
+    };
     let name = session.project_name().to_owned();
 
     let mut tree = session.tree();

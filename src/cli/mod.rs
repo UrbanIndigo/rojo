@@ -7,6 +7,7 @@ mod init;
 mod mcp;
 mod plugin;
 mod serve;
+mod serve_port;
 mod sourcemap;
 mod syncback;
 mod upload;

@@ -1,6 +1,6 @@
 use std::{
     io::{self, Write},
-    net::{IpAddr, Ipv4Addr, TcpListener},
+    net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     process,
     sync::Arc,
@@ -13,15 +13,9 @@ use termcolor::{BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
 
 use crate::{serve_session::ServeSession, web::LiveServer};
 
-use super::{resolve_path, GlobalOptions};
+use super::{resolve_path, serve_port, GlobalOptions};
 
 const DEFAULT_BIND_ADDRESS: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
-const DEFAULT_PORT: u16 = 34872;
-
-/// How many ports from `DEFAULT_PORT` up are tried when no port is set. The
-/// plugin scans the same range to find servers, so keep the two in step
-/// (`AutoConnect.SCAN_PORTS` in plugin/src/AutoConnect.lua).
-const AUTO_PORT_COUNT: u16 = 28;
 
 /// Expose a Rojo project to the Rojo Studio plugin.
 #[derive(Debug, Parser)]
@@ -35,8 +29,9 @@ pub struct ServeCommand {
     pub address: Option<IpAddr>,
 
     /// The port to listen on. Defaults to the project's `servePort`. Without
-    /// one, or with `--port 0`, Rojo takes the first free port from `34872`
-    /// to `34899`, which the plugin finds by itself.
+    /// one, or with `--port 0`, Rojo uses the port it last picked for this
+    /// project (which `rojo build` writes into places) if it is free, or else
+    /// the first free port from `34872` to `34899`.
     #[clap(long)]
     pub port: Option<u16>,
 
@@ -96,7 +91,7 @@ impl ServeCommand {
             // Several projects can be served at once without picking ports
             // for them. If every port is taken, binding the default fails
             // with the usual "address in use" error.
-            _ => first_free_port(ip).unwrap_or(DEFAULT_PORT),
+            _ => serve_port::for_serve(&session.root_project().file_location, ip),
         };
 
         // The CLI flag, when given, replaces the project's list rather than
@@ -115,14 +110,6 @@ impl ServeCommand {
 
         Ok(())
     }
-}
-
-/// The first port in the auto range that can be bound on `ip` right now.
-/// Another process could take it before the server binds, in which case
-/// starting fails as it would for a busy fixed port.
-fn first_free_port(ip: IpAddr) -> Option<u16> {
-    (DEFAULT_PORT..DEFAULT_PORT + AUTO_PORT_COUNT)
-        .find(|&port| TcpListener::bind((ip, port)).map(drop).is_ok())
 }
 
 fn env_flag(name: &str) -> bool {
