@@ -228,17 +228,12 @@ pub const PROJECT_NAME_ATTRIBUTE: &str = "__Rojo_ProjectName";
 /// alone. A published place keeps them, which is harmless: a port number
 /// and the project's name.
 fn stamp_serve_info(session: &ServeSession) {
-    // A project without a fixed port gets the one `rojo serve` uses for it,
-    // picking and recording one if neither has run yet. The bind address is
-    // only used to test whether a port is free.
+    // A project without a fixed port is served on the port a dev script
+    // hands every command in `ROJO_SERVE_PORT`. Without either, the place
+    // names no port and the plugin scans for its server.
     let port = match session.project_port() {
         Some(port) if port != 0 => Some(port),
-        _ => serve_port::for_build(
-            &session.root_project().file_location,
-            session
-                .serve_address()
-                .unwrap_or(std::net::Ipv4Addr::LOCALHOST.into()),
-        ),
+        _ => serve_port::from_env(),
     };
     let name = session.project_name().to_owned();
 

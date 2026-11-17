@@ -29,9 +29,8 @@ pub struct ServeCommand {
     pub address: Option<IpAddr>,
 
     /// The port to listen on. Defaults to the project's `servePort`. Without
-    /// one, or with `--port 0`, Rojo uses the port it last picked for this
-    /// project (which `rojo build` writes into places) if it is free, or else
-    /// the first free port from `34872` to `34899`.
+    /// one, or with `--port 0`, Rojo uses the port in the environment variable
+    /// `ROJO_SERVE_PORT`, or else the first free port from `34872` to `34899`.
     #[clap(long)]
     pub port: Option<u16>,
 
@@ -91,7 +90,9 @@ impl ServeCommand {
             // Several projects can be served at once without picking ports
             // for them. If every port is taken, binding the default fails
             // with the usual "address in use" error.
-            _ => serve_port::for_serve(&session.root_project().file_location, ip),
+            _ => serve_port::from_env()
+                .or_else(|| serve_port::first_free_port(ip))
+                .unwrap_or(serve_port::DEFAULT_PORT),
         };
 
         // The CLI flag, when given, replaces the project's list rather than
