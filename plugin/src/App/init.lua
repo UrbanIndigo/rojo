@@ -75,6 +75,10 @@ local openedPlaceName = game.Name
 -- They are read once as the place opens.
 local builtProjectName = workspace:GetAttribute("__Rojo_ProjectName")
 local builtServePort = workspace:GetAttribute("__Rojo_ServePort")
+local builtTreeFingerprint = workspace:GetAttribute("__Rojo_TreeFingerprint")
+if type(builtTreeFingerprint) ~= "string" then
+	builtTreeFingerprint = nil
+end
 if type(builtProjectName) ~= "string" then
 	builtProjectName = nil
 end
@@ -1031,6 +1035,25 @@ function App:useRunningConnectionInfo()
 	self.setPort(port)
 end
 
+-- The fingerprint of the tree the open place was built from, while the place
+-- can still be trusted to be exactly that build: nothing has been synced to
+-- it in this Studio session, nothing can be undone (so it hasn't been
+-- edited), and no one else is in it.
+function App:getFastSyncFingerprint(): string?
+	if builtTreeFingerprint == nil or self.syncedThisStudioSession or #Players:GetPlayers() > 0 then
+		return nil
+	end
+
+	local ok, canUndo = pcall(function()
+		return ChangeHistoryService:GetCanUndo()
+	end)
+	if not ok or canUndo then
+		return nil
+	end
+
+	return builtTreeFingerprint
+end
+
 function App:startSession()
 	if self.serveSession ~= nil then
 		-- A session is already active
@@ -1067,6 +1090,7 @@ function App:startSession()
 	local serveSession = ServeSession.new({
 		apiContext = apiContext,
 		twoWaySync = Settings:get("twoWaySync"),
+		fastSyncFingerprint = self:getFastSyncFingerprint(),
 	})
 	-- Assign before start() so the guard above rejects simultaneous calls
 	self.serveSession = serveSession
@@ -1128,6 +1152,7 @@ function App:startSession()
 				})
 			end
 		elseif status == ServeSession.Status.Connected then
+			self.syncedThisStudioSession = true
 			self.knownProjects[details] = true
 			self:setPriorSyncInfo(host, port, details)
 			self:setRunningConnectionInfo(baseUrl)

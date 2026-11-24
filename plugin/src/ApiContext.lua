@@ -235,6 +235,20 @@ function ApiContext:read(ids)
 	end)
 end
 
+-- The tree under `id` without properties, and the fingerprint of the whole
+-- tree, from servers that report `fastSync`.
+function ApiContext:readStructure(id)
+	local url = ("%s/api/read-structure/%s"):format(self.__baseUrl, id)
+
+	return Http.get(url):andThen(rejectFailedRequests):andThen(Http.Response.msgpack):andThen(function(body)
+		if body.sessionId ~= self.__sessionId then
+			return Promise.reject("Server changed ID")
+		end
+
+		return body
+	end)
+end
+
 function ApiContext:write(patch)
 	local url = ("%s/api/write"):format(self.__baseUrl)
 

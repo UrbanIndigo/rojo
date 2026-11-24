@@ -63,6 +63,9 @@ ServeSession.Status = Status
 local validateServeOptions = t.strictInterface({
 	apiContext = t.table,
 	twoWaySync = t.boolean,
+	-- The tree fingerprint `rojo build` wrote into the open place, given only
+	-- while the place is unchanged since it was opened
+	fastSyncFingerprint = t.optional(t.string),
 })
 
 function ServeSession.new(options)
@@ -101,6 +104,7 @@ function ServeSession.new(options)
 		__status = Status.NotStarted,
 		__apiContext = options.apiContext,
 		__twoWaySync = options.twoWaySync,
+		__fastSyncFingerprint = options.fastSyncFingerprint,
 		__reconciler = reconciler,
 		__instanceMap = instanceMap,
 		__changeBatcher = changeBatcher,
@@ -515,6 +519,35 @@ function ServeSession:__applyPatch(patch)
 end
 
 function ServeSession:__initialSync(serverInfo)
+	if not serverInfo.fastSync or self.__fastSyncFingerprint == nil then
+		return self:__fullSync(serverInfo)
+	end
+
+	-- A place `rojo build` made from the same files, and not changed since,
+	-- already matches the server. Then only the tree's shape is needed to
+	-- match instances to IDs, which skips downloading and diffing every
+	-- property: most of the time a large project takes to connect.
+	self:setLoadingText("Checking whether the place matches the server...")
+	return self.__apiContext:readStructure(serverInfo.rootInstanceId):andThen(function(body)
+		if body.treeFingerprint ~= self.__fastSyncFingerprint then
+			Log.trace("Place was built from a different tree than the server's, doing a full sync")
+			return self:__fullSync(serverInfo)
+		end
+
+		self.__apiContext:setMessageCursor(body.messageCursor)
+		self:setLoadingText("Hydrating instance map...")
+		self.__reconciler:hydrate(body.instances, serverInfo.rootInstanceId, game)
+		self.__fastSynced = true
+		Log.info("The place matches the Rojo server, so the initial sync was skipped")
+		return nil
+	end)
+end
+
+function ServeSession:didFastSync(): boolean
+	return self.__fastSynced == true
+end
+
+function ServeSession:__fullSync(serverInfo)
 	return self.__apiContext:read({ serverInfo.rootInstanceId }):andThen(function(readResponseBody)
 		-- Tell the API Context that we're up-to-date with the version of
 		-- the tree defined in this response.

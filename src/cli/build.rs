@@ -11,7 +11,10 @@ use rbx_dom_weak::types::{Attributes, Variant};
 use roblox_install::RobloxStudio;
 use tokio::runtime::Runtime;
 
-use crate::serve_session::ServeSession;
+use crate::{
+    serve_session::ServeSession,
+    tree_fingerprint::{tree_fingerprint, TREE_FINGERPRINT_ATTRIBUTE},
+};
 
 use super::{resolve_path, serve_port};
 
@@ -253,11 +256,35 @@ fn stamp_serve_info(session: &ServeSession) {
         return;
     };
 
+    // Remove what an earlier build in `--watch` added, so the fingerprint is
+    // of the tree `rojo serve` would have
     let properties = workspace.properties_mut();
     let mut attributes = match properties.get(&"Attributes".into()) {
         Some(Variant::Attributes(existing)) => existing.clone(),
         _ => Attributes::new(),
     };
+    for key in [
+        PROJECT_NAME_ATTRIBUTE,
+        SERVE_PORT_ATTRIBUTE,
+        TREE_FINGERPRINT_ATTRIBUTE,
+    ] {
+        attributes.remove(key);
+    }
+    if attributes.iter().next().is_some() {
+        properties.insert("Attributes".into(), attributes.clone().into());
+    } else {
+        properties.remove(&"Attributes".into());
+    }
+    let fingerprint = tree_fingerprint(&tree);
+
+    let Some(mut workspace) = tree.get_instance_mut(workspace_id) else {
+        return;
+    };
+    let properties = workspace.properties_mut();
+    attributes.insert(
+        TREE_FINGERPRINT_ATTRIBUTE.to_owned(),
+        Variant::String(fingerprint),
+    );
     attributes.insert(PROJECT_NAME_ATTRIBUTE.to_owned(), Variant::String(name));
     match port {
         Some(port) => {

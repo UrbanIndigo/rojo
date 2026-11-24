@@ -25,6 +25,7 @@ mod session_id;
 mod snapshot;
 mod snapshot_middleware;
 mod syncback;
+mod tree_fingerprint;
 mod variant_eq;
 mod web;
 

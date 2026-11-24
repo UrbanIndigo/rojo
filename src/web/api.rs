@@ -23,8 +23,8 @@ use crate::{
             AgentClaimRequest, AgentClaimResponse, AgentConnectRequest, AgentConnectRequestInfo,
             AgentConnectResponse, AgentStatusResponse, ErrorResponse, Instance, MessagesPacket,
             OpenResponse, ReadResponse, ServerInfoResponse, SocketPacket, SocketPacketBody,
-            SocketPacketType, SubscribeMessage, WriteRequest, WriteResponse, PROTOCOL_VERSION,
-            SERVER_VERSION,
+            SocketPacketType, StructureReadResponse, SubscribeMessage, WriteRequest, WriteResponse,
+            PROTOCOL_VERSION, SERVER_VERSION,
         },
         origin::canonical,
         util::{deserialize_msgpack, msgpack, msgpack_ok, serialize_msgpack},
@@ -45,6 +45,9 @@ pub async fn call(
         (&Method::GET, "/api/rojo") => service.handle_api_rojo().await,
         (&Method::GET, path) if path.starts_with("/api/read/") => {
             service.handle_api_read(request).await
+        }
+        (&Method::GET, path) if path.starts_with("/api/read-structure/") => {
+            service.handle_api_read_structure(request).await
         }
         (&Method::GET, path) if path.starts_with("/api/socket/") => {
             if is_upgrade_request(&request) {
@@ -106,6 +109,7 @@ impl ApiService {
             game_id: self.serve_session.game_id(),
             root_instance_id,
             auto_connect: self.serve_session.auto_connect(),
+            fast_sync: true,
         })
     }
 
@@ -323,6 +327,38 @@ impl ApiService {
         msgpack_ok(ReadResponse {
             session_id: self.serve_session.session_id(),
             message_cursor,
+            instances,
+        })
+    }
+
+    /// Like /api/read for one ID, but without properties, and with the
+    /// fingerprint of the whole tree taken under the same lock, so it matches
+    /// the returned message cursor.
+    async fn handle_api_read_structure(&self, request: Request<Body>) -> Response<Body> {
+        let argument = &request.uri().path()["/api/read-structure/".len()..];
+        let Ok(root_id) = Ref::from_str(argument) else {
+            return msgpack(
+                ErrorResponse::bad_request("Malformed ID"),
+                StatusCode::BAD_REQUEST,
+            );
+        };
+
+        let message_cursor = self.serve_session.message_queue().cursor();
+        let tree = self.serve_session.tree();
+        let tree_fingerprint = crate::tree_fingerprint::tree_fingerprint(&tree);
+
+        let mut instances = HashMap::new();
+        if let Some(instance) = tree.get_instance(root_id) {
+            instances.insert(root_id, Instance::structure_of(instance));
+            for descendant in tree.descendants(root_id) {
+                instances.insert(descendant.id(), Instance::structure_of(descendant));
+            }
+        }
+
+        msgpack_ok(StructureReadResponse {
+            session_id: self.serve_session.session_id(),
+            message_cursor,
+            tree_fingerprint,
             instances,
         })
     }

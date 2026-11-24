@@ -4,6 +4,7 @@ expression: redactions.redacted_yaml(info)
 ---
 autoConnect: false
 expectedPlaceIds: ~
+fastSync: true
 gameId: ~
 placeId: ~
 projectName: add_folder

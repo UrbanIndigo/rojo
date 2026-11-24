@@ -132,6 +132,20 @@ pub struct Instance<'a> {
 }
 
 impl Instance<'_> {
+    /// The instance without its properties.
+    pub(crate) fn structure_of(source: InstanceWithMeta<'_>) -> Instance<'_> {
+        Instance {
+            id: source.id(),
+            parent: source.parent(),
+            name: Cow::Borrowed(source.name()),
+            class_name: source.class_name(),
+            properties: UstrMap::default(),
+            children: Cow::Borrowed(source.children()),
+            // Only diffing and adding instances need metadata
+            metadata: None,
+        }
+    }
+
     pub(crate) fn from_rojo_instance(source: InstanceWithMeta<'_>) -> Instance<'_> {
         let properties = source
             .properties()
@@ -178,6 +192,10 @@ pub struct ServerInfoResponse {
     /// Older plugins ignore unknown fields.
     #[serde(default)]
     pub auto_connect: bool,
+    /// The server has /api/read-structure, so a place built from the same
+    /// tree can connect without a full sync.
+    #[serde(default)]
+    pub fast_sync: bool,
 }
 
 /// Response body from /api/agent/status
@@ -241,6 +259,18 @@ pub struct AgentConnectResponse {
 pub struct ReadResponse<'a> {
     pub session_id: SessionId,
     pub message_cursor: u32,
+    pub instances: HashMap<Ref, Instance<'a>>,
+}
+
+/// Response body from /api/read-structure/{id}: the tree without properties,
+/// and the fingerprint of the full tree at the same message cursor. The
+/// plugin uses it to connect to a place that already matches the server.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StructureReadResponse<'a> {
+    pub session_id: SessionId,
+    pub message_cursor: u32,
+    pub tree_fingerprint: String,
     pub instances: HashMap<Ref, Instance<'a>>,
 }
 
